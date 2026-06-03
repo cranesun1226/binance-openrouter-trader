@@ -37,7 +37,7 @@ INSTRUMENT_FILTER_CACHE: Dict[str, Dict[str, Decimal]] = {}
 _EXCHANGE_INFO_BY_SYMBOL: Dict[str, Dict[str, Any]] = {}
 ENTRY_ORDER_RETRY_QTY_FACTOR = Decimal("0.99")
 ENTRY_ORDER_MAX_ATTEMPTS = 25
-NON_RETRYABLE_ENTRY_ERROR_CODES = {-1111, -4164}
+NON_RETRYABLE_ENTRY_ERROR_CODES = {-1111, -4164, -4411}
 
 # Numeric helpers and exchange metadata.
 

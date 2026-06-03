@@ -1,0 +1,36 @@
+import unittest
+from decimal import Decimal
+from unittest.mock import patch
+
+from src.binance import trade_position
+
+
+class TradePositionTests(unittest.TestCase):
+    def test_tradfi_agreement_error_is_not_retried(self):
+        with patch(
+            "src.binance.trade_position.adjust_qty_for_symbol",
+            return_value=Decimal("3.16"),
+        ), patch(
+            "src.binance.trade_position.set_leverage",
+            return_value=1,
+        ), patch(
+            "src.binance.trade_position._signed_post_expect_key",
+            return_value=(None, -4411, "Please sign TradFi-Perps agreement contract fapi."),
+        ) as signed_post:
+            order, code, message = trade_position.place_market_entry_order(
+                "api-key",
+                "api-secret",
+                "CLUSDT",
+                "Sell",
+                "3.16",
+                leverage=1,
+            )
+
+        self.assertIsNone(order)
+        self.assertEqual(code, -4411)
+        self.assertIn("TradFi-Perps", message)
+        self.assertEqual(signed_post.call_count, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
