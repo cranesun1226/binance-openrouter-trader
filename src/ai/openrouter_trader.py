@@ -67,8 +67,8 @@ _OPENROUTER_MODEL_PRICING_USD_PER_MILLION: dict[str, dict[str, float]] = {
 }
 
 _SYSTEM_PROMPT = (
-    "You are a world-class USDT-M perpetual futures trader. "
-    "Use only the supplied symbol and close-price payload. "
+    "You are a world-class USDT perpetual futures crypto trader. "
+    "Analyze all 100 close prices in balance(not just the latest few) to judge whether a LONG or SHORT position offers a higher expected value. "
     "Return exactly one JSON decision."
 )
 
@@ -171,7 +171,9 @@ def _format_direction_prompt(payload: Dict[str, Any]) -> str:
     symbol = str(payload.get("symbol") or "the supplied symbol").strip().upper() or "the supplied symbol"
     return (
         f"You are a world-class {symbol} trader.\n"
-        "Use your best judgment to decide whether LONG or SHORT offers the higher expected value.\n"
+        "Use your best judgment to decide whether LONG or SHORT position offers the higher expected value in the future.\n"
+        f"Consider all 100 supplied close prices in balance, not only the most recent few, when judging the overall setup.\n"
+        "Use only the supplied 1h close prices and current_price.\n"
         "Return JSON only: {\"decision\":\"LONG\"} or {\"decision\":\"SHORT\"}.\n"
         f"Market payload:\n{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
     )

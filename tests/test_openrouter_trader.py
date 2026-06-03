@@ -38,6 +38,13 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(result.decision.decision, "LONG")
         payload = mocked_post.call_args.kwargs["json"]
         self.assertEqual(payload["model"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(
+            payload["messages"][0]["content"],
+            "You are a world-class USDT perpetual futures crypto trader. "
+            "Analyze all 100 close prices in balance(not just the latest few) to judge whether a LONG or SHORT position offers a higher expected value. "
+            "Return exactly one JSON decision.",
+        )
+        self.assertEqual(payload["messages"][1]["content"], "prompt")
         self.assertEqual(payload["reasoning"]["effort"], "xhigh")
         self.assertFalse(payload["reasoning"]["exclude"])
         self.assertEqual(payload["max_tokens"], 1234)
@@ -66,7 +73,9 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(
             prompt,
             'You are a world-class BTCUSDT trader.\n'
-            'Use your best judgment to decide whether LONG or SHORT offers the higher expected value.\n'
+            'Use your best judgment to decide whether LONG or SHORT position offers the higher expected value in the future.\n'
+            'Consider all 100 supplied close prices in balance, not only the most recent few, when judging the overall setup.\n'
+            'Use only the supplied 1h close prices and current_price.\n'
             'Return JSON only: {"decision":"LONG"} or {"decision":"SHORT"}.\n'
             'Market payload:\n{"symbol":"BTCUSDT","reference_price":100.0,"timeframes":{"1h":[98.0,99.0,100.0]}}',
         )
