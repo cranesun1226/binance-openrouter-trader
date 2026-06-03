@@ -12,7 +12,7 @@ This project runs a 1x-leverage portfolio loop across four fixed passive markets
 
 - OpenRouter 기반 LLM 판단
   - 기본 모델: `deepseek/deepseek-v4-flash`
-  - reasoning effort: `xhigh`
+  - reasoning effort: `xhigh` (maximum reasoning; `max` is normalized to `xhigh`)
   - 응답은 `LONG` 또는 `SHORT`만 허용
 - 6개 슬롯 포트폴리오
   - Passive: `CLUSDT`, `XAUUSDT`, `QQQUSDT`, `BTCUSDT`
@@ -46,10 +46,16 @@ This project runs a 1x-leverage portfolio loop across four fixed passive markets
 - 첫 live run은 아주 작은 자금으로 `python main.py --once`부터 실행
 - Telegram에서 각 슬롯 판단, 주문 결과, stop sync 메시지를 확인한 뒤 scheduler 상시 실행
 
+### LLM 프롬프트
+
+정확한 OpenRouter 요청 구조와 프롬프트 템플릿은 [docs/llm-prompt.md](./docs/llm-prompt.md)에 문서화되어 있습니다.
+
+요약하면, LLM에는 한 번에 한 종목의 `symbol`, 현재 `reference_price`, 그리고 1시간봉 종가 100개만 전달됩니다. 최신 종가는 판단 시점의 실시간 기준가로 보정되며, 응답은 strict JSON schema로 `{"decision":"LONG"}` 또는 `{"decision":"SHORT"}`만 허용합니다.
+
 ### 설치
 
 ```bash
-git clone https://github.com/YOUR_NAME/binance-openrouter-trader.git
+git clone https://github.com/cranesun1226/binance-openrouter-trader.git
 cd binance-openrouter-trader
 
 python -m venv venv
@@ -191,7 +197,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 
 - OpenRouter-based LLM decisions
   - Default model: `deepseek/deepseek-v4-flash`
-  - Reasoning effort: `xhigh`
+  - Reasoning effort: `xhigh` (maximum reasoning; `max` is normalized to `xhigh`)
   - The bot accepts only `LONG` or `SHORT`
 - Six-slot portfolio
   - Passive: `CLUSDT`, `XAUUSDT`, `QQQUSDT`, `BTCUSDT`
@@ -225,10 +231,16 @@ The project has passed a full live-data dry run for all six slots, including Ope
 - Start live trading with a very small balance and `python main.py --once`
 - Review Telegram messages for each slot before running the scheduler continuously
 
+### LLM Prompt
+
+The exact OpenRouter request body and prompt template are documented in [docs/llm-prompt.md](./docs/llm-prompt.md).
+
+In short, the LLM receives only one symbol at a time: `symbol`, live `reference_price`, and 100 recent 1h close prices. The newest close is aligned to the live reference price at decision time, and the response is constrained by a strict JSON schema to `{"decision":"LONG"}` or `{"decision":"SHORT"}`.
+
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_NAME/binance-openrouter-trader.git
+git clone https://github.com/cranesun1226/binance-openrouter-trader.git
 cd binance-openrouter-trader
 
 python -m venv venv

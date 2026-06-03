@@ -56,6 +56,21 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertIsNone(decision)
         mocked_call.assert_not_called()
 
+    def test_direction_prompt_contract_uses_symbol_reference_and_close_prices_only(self):
+        prompt = openrouter_trader._build_direction_prompt(
+            symbol="btcusdt",
+            reference_price=100.0,
+            timeframe_ohlcv={"1h": [98.0, 99.0, 100.0]},
+        )
+
+        self.assertEqual(
+            prompt,
+            'You are a world-class BTCUSDT trader.\n'
+            'Use your best judgment to decide whether LONG or SHORT offers the higher expected value.\n'
+            'Return JSON only: {"decision":"LONG"} or {"decision":"SHORT"}.\n'
+            'Market payload:\n{"symbol":"BTCUSDT","reference_price":100.0,"timeframes":{"1h":[98.0,99.0,100.0]}}',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
