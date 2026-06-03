@@ -1,4 +1,4 @@
-"""Run a live-data dry-run portfolio cycle without submitting Binance orders."""
+"""Run one live-data portfolio cycle while blocking all Binance order writes."""
 
 from __future__ import annotations
 
@@ -133,8 +133,13 @@ def main() -> int:
     scheduler = TradingScheduler()
     notification_callback = None if args.no_telegram else scheduler._notify_telegram_event
     if not args.no_telegram and checks["telegram_configured"]:
-        send_telegram_message("<b>Binance OpenRouter Trader dry-run validation started</b>\nNo Binance orders will be submitted.")
+        send_telegram_message(
+            "<b>Binance OpenRouter Trader dry-run validation started</b>\n"
+            "No Binance orders will be submitted."
+        )
 
+    # Patch private/account-mutating Binance calls only. Public market data,
+    # OpenRouter, and Telegram still run against live external services.
     with patch("src.strategy.portfolio_strategy.get_binance_credentials", return_value=("dry_run", "dry_run")), patch(
         "src.strategy.portfolio_strategy.get_account_overview", side_effect=_fake_account_overview
     ), patch(

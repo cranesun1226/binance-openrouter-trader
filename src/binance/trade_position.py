@@ -32,7 +32,7 @@ from src.infra.logger import format_log_details, get_logger
 
 logger = get_logger("trade_position")
 
-BINANCE_RECV_WINDOW = int(get_recv_window_ms())
+SIGNED_REQUEST_RECV_WINDOW_MS = int(get_recv_window_ms())
 INSTRUMENT_FILTER_CACHE: Dict[str, Dict[str, Decimal]] = {}
 _EXCHANGE_INFO_BY_SYMBOL: Dict[str, Dict[str, Any]] = {}
 ENTRY_ORDER_RETRY_QTY_FACTOR = Decimal("0.99")
@@ -297,7 +297,7 @@ def _build_signed_params(api_secret: str, params: Sequence[Tuple[str, Any]]) -> 
             continue
         items.append((str(key), str(value)))
 
-    items.append(("recvWindow", str(BINANCE_RECV_WINDOW)))
+    items.append(("recvWindow", str(SIGNED_REQUEST_RECV_WINDOW_MS)))
     items.append(("timestamp", timestamp))
 
     query_string = urlencode(items, doseq=True)
