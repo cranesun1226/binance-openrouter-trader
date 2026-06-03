@@ -6,7 +6,7 @@ This project runs a 1x-leverage portfolio loop across four fixed passive markets
 
 > This software is for research and automation experiments. It is not financial advice. Futures trading can lose money quickly, and live mode sends real Binance Futures orders.
 
-## 한국어
+## LLM 자동 매매
 
 ### 주요 기능
 
@@ -185,7 +185,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 - API key, Telegram token, 실제 계좌 정보, live cycle output은 절대 커밋하지 마세요.
 - `db/`에는 LLM 입출력과 차트 산출물이 저장됩니다. 공개 이슈나 PR에 첨부하기 전에 내용을 확인하세요.
 
-## English
+## LLM Auto Trading
 
 ### Features
 
