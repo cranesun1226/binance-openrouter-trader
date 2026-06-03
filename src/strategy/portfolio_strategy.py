@@ -54,7 +54,7 @@ CONFIG_PATH = os.path.join(ROOT_DIR, "setting.yaml")
 DB_DIR = os.path.join(ROOT_DIR, "db")
 MAX_DB_CYCLE_DIRS = 20
 STATE_VERSION = "1.0.0"
-TRIGGER_PRICE_DIGITS = 2
+TRIGGER_PRICE_DIGITS = 8
 MANAGED_DECISIONS = {"LONG", "SHORT"}
 NotificationCallback = Optional[Callable[[str, Dict[str, Any]], None]]
 

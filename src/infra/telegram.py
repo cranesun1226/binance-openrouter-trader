@@ -42,6 +42,12 @@ _DUPLICATED_TAG_PATTERNS = (
     (re.compile(r"<i>\s*<i>(.*?)</i>\s*</i>", flags=re.DOTALL), "i"),
     (re.compile(r"<code>\s*<code>(.*?)</code>\s*</code>", flags=re.DOTALL), "code"),
 )
+_TELEGRAM_BOT_TOKEN_IN_URL_PATTERN = re.compile(r"/bot[^/\s]+/")
+
+
+def _sanitize_telegram_error(value: object) -> str:
+    text = str(value or "")
+    return _TELEGRAM_BOT_TOKEN_IN_URL_PATTERN.sub("/bot<redacted>/", text)
 
 
 def escape_telegram_html(value: object) -> str:
@@ -224,7 +230,7 @@ def send_telegram_message(text: str) -> bool:
             )
             payload = response.json()
         except Exception as exc:
-            logger.warning("Failed to send Telegram message: %s", exc)
+            logger.warning("Failed to send Telegram message: %s", _sanitize_telegram_error(exc))
             success = False
             continue
 
@@ -289,7 +295,7 @@ def send_telegram_photo(photo_bytes: bytes, *, filename: str = "chart.png", capt
         )
         payload = response.json()
     except Exception as exc:
-        logger.warning("Failed to send Telegram photo: %s", exc)
+        logger.warning("Failed to send Telegram photo: %s", _sanitize_telegram_error(exc))
         return False
 
     if response.status_code >= 400 or not isinstance(payload, dict) or not bool(payload.get("ok")):

@@ -83,6 +83,13 @@ class PortfolioHelperTests(unittest.TestCase):
         self.assertTrue(triggered["should_trigger"])
         self.assertEqual(triggered["reason"], "price_distance_reached")
 
+    def test_trigger_levels_keep_precision_for_low_priced_symbols(self):
+        levels = portfolio_strategy._build_trigger_levels(0.093455, 1.0)
+
+        self.assertEqual(levels["trigger_price"], 0.093455)
+        self.assertLess(levels["next_trigger_down"], levels["trigger_price"])
+        self.assertGreater(levels["next_trigger_up"], levels["trigger_price"])
+
     def test_duplicate_active_state_symbol_is_cleared_for_later_slot(self):
         config = {
             "passive_symbols": ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"],
