@@ -41,6 +41,7 @@ from src.strategy.runtime_config import (
     DEFAULT_OPENROUTER_MAX_TOKENS,
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_OPENROUTER_REASONING_EFFORT,
+    DEFAULT_OPENROUTER_TIMEOUT_SECONDS,
     DEFAULT_PASSIVE_SYMBOLS,
     DEFAULT_REBALANCE_THRESHOLD_PCT,
     DEFAULT_TRIGGER_PCT_USDT,
@@ -133,8 +134,12 @@ def _normalize_reasoning_effort(value: Any) -> str:
         return "xhigh"
     if normalized in {"none", "minimal", "low", "medium", "high", "xhigh"}:
         return normalized
-    logger.warning("Unsupported openrouter_reasoning_effort=%s; using xhigh", value)
-    return "xhigh"
+    logger.warning(
+        "Unsupported openrouter_reasoning_effort=%s; using %s",
+        value,
+        DEFAULT_OPENROUTER_REASONING_EFFORT,
+    )
+    return DEFAULT_OPENROUTER_REASONING_EFFORT
 
 
 def _normalize_passive_symbols(value: Any) -> list[str]:
@@ -200,6 +205,10 @@ def _load_strategy_config() -> Dict[str, Any]:
         "openrouter_max_tokens": _normalize_positive_int(
             raw.get("openrouter_max_tokens", DEFAULT_OPENROUTER_MAX_TOKENS),
             DEFAULT_OPENROUTER_MAX_TOKENS,
+        ),
+        "openrouter_timeout_seconds": _normalize_positive_float(
+            raw.get("openrouter_timeout_seconds", DEFAULT_OPENROUTER_TIMEOUT_SECONDS),
+            DEFAULT_OPENROUTER_TIMEOUT_SECONDS,
         ),
         "passive_symbols": passive_symbols,
         "active_targets": active_targets,
@@ -1015,6 +1024,7 @@ def _evaluate_slot_direction(
         reasoning_effort=str(config["openrouter_reasoning_effort"]),
         model=str(config["openrouter_model"]),
         max_tokens=int(config["openrouter_max_tokens"]),
+        timeout_seconds=float(config["openrouter_timeout_seconds"]),
         analysis_sink=ai_analysis,
         decision_mode=decision_mode,
     )

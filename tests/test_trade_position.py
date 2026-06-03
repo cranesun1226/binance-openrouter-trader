@@ -16,7 +16,7 @@ class TradePositionTests(unittest.TestCase):
         ), patch(
             "src.binance.trade_position._signed_post_expect_key",
             return_value=(None, -4411, "Please sign TradFi-Perps agreement contract fapi."),
-        ) as signed_post:
+        ) as signed_post, patch("src.binance.trade_position.logger"):
             order, code, message = trade_position.place_market_entry_order(
                 "api-key",
                 "api-secret",

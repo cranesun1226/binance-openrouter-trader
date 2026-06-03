@@ -2,6 +2,8 @@
 
 from src.ai.openrouter_trader import (
     OPENROUTER_DIRECTION_MODEL,
+    OPENROUTER_DEFAULT_REASONING_EFFORT,
+    OPENROUTER_DEFAULT_TIMEOUT_SECONDS,
     OPENROUTER_MAX_REASONING_EFFORT,
     OpenRouterStructuredResponse,
     TradeDirectionDecision,
@@ -12,6 +14,8 @@ from src.ai.openrouter_trader import (
 
 __all__ = [
     "OPENROUTER_DIRECTION_MODEL",
+    "OPENROUTER_DEFAULT_REASONING_EFFORT",
+    "OPENROUTER_DEFAULT_TIMEOUT_SECONDS",
     "OPENROUTER_MAX_REASONING_EFFORT",
     "OpenRouterStructuredResponse",
     "TradeDirectionDecision",

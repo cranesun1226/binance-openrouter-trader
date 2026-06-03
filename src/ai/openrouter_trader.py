@@ -55,7 +55,10 @@ logger = get_logger("openrouter_trader")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_GENERATE_MAX_RETRIES = 3
 OPENROUTER_DIRECTION_MODEL = "deepseek/deepseek-v4-flash"
+OPENROUTER_DEFAULT_REASONING_EFFORT = "high"
 OPENROUTER_MAX_REASONING_EFFORT = "xhigh"
+OPENROUTER_DEFAULT_TIMEOUT_SECONDS = 300.0
+OPENROUTER_CONNECT_TIMEOUT_SECONDS = 10.0
 OPENROUTER_APP_TITLE = "binance-openrouter-trader"
 _ONE_MILLION = 1_000_000
 
@@ -93,6 +96,10 @@ class OpenRouterStructuredResponse(Generic[DecisionT]):
     response_payload: dict[str, Any] = field(default_factory=dict)
     reasoning: str = ""
     reasoning_details: list[dict[str, Any]] = field(default_factory=list)
+
+
+class OpenRouterEmptyContentError(ValueError):
+    """Raised when OpenRouter returns a response without final JSON content."""
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -279,6 +286,16 @@ def _normalize_reasoning_details(value: Any) -> list[dict[str, Any]]:
     return [item for item in (_to_jsonable(row) for row in value) if isinstance(item, dict)]
 
 
+def _normalize_timeout_seconds(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return OPENROUTER_DEFAULT_TIMEOUT_SECONDS
+    if parsed <= 0.0:
+        return OPENROUTER_DEFAULT_TIMEOUT_SECONDS
+    return parsed
+
+
 def _save_direction_analysis_data(
     *,
     cycle_dir: str,
@@ -292,6 +309,7 @@ def _save_direction_analysis_data(
     reasoning_details: list[dict[str, Any]],
     model: str,
     reasoning_effort: str,
+    timeout_seconds: float,
     decision_mode: str = "direction",
 ) -> Dict[str, str]:
     saved_paths: Dict[str, str] = {}
@@ -306,6 +324,7 @@ def _save_direction_analysis_data(
                     {
                         "model": model,
                         "reasoning_effort": reasoning_effort,
+                        "timeout_seconds": timeout_seconds,
                         "decision_mode": normalized_mode,
                         "prompt": prompt,
                         "payload": prompt_payload,
@@ -345,12 +364,14 @@ def _call_openrouter_structured_decision(
     response_model: type[DecisionT],
     model: str = OPENROUTER_DIRECTION_MODEL,
     max_tokens: int = 8192,
+    timeout_seconds: float = OPENROUTER_DEFAULT_TIMEOUT_SECONDS,
     context_label: str = "direction",
 ) -> Optional[OpenRouterStructuredResponse[DecisionT]]:
     api_key = get_openrouter_api_key()
-    normalized_reasoning_effort = str(reasoning_effort or OPENROUTER_MAX_REASONING_EFFORT).strip().lower()
+    normalized_reasoning_effort = str(reasoning_effort or OPENROUTER_DEFAULT_REASONING_EFFORT).strip().lower()
     if normalized_reasoning_effort == "max":
         normalized_reasoning_effort = OPENROUTER_MAX_REASONING_EFFORT
+    normalized_timeout_seconds = _normalize_timeout_seconds(timeout_seconds)
 
     payload = {
         "model": str(model or OPENROUTER_DIRECTION_MODEL).strip() or OPENROUTER_DIRECTION_MODEL,
@@ -383,11 +404,17 @@ def _call_openrouter_structured_decision(
                         "max_retries": OPENROUTER_GENERATE_MAX_RETRIES,
                         "model": payload["model"],
                         "reasoning_effort": normalized_reasoning_effort,
+                        "timeout_seconds": normalized_timeout_seconds,
                         "prompt_chars": len(prompt or ""),
                     }
                 ),
             )
-            response = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=120)
+            response = requests.post(
+                OPENROUTER_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=(OPENROUTER_CONNECT_TIMEOUT_SECONDS, normalized_timeout_seconds),
+            )
             if getattr(response, "status_code", 200) >= 400:
                 error = RuntimeError(f"OpenRouter HTTP {response.status_code}: {getattr(response, 'text', '')}")
                 setattr(error, "status_code", response.status_code)
@@ -398,6 +425,15 @@ def _call_openrouter_structured_decision(
                 raise ValueError(f"OpenRouter returned unexpected payload: {response_payload!r}")
             message_payload = _extract_message_payload(response_payload)
             raw_response = _extract_content_text(message_payload)
+            if not raw_response:
+                finish_reason = None
+                choices = response_payload.get("choices")
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    finish_reason = choices[0].get("finish_reason")
+                raise OpenRouterEmptyContentError(
+                    f"OpenRouter returned empty final content"
+                    f" (context={context_label}, finish_reason={finish_reason})"
+                )
             decision = response_model.model_validate_json(raw_response)
             usage_metadata = response_payload.get("usage") if isinstance(response_payload.get("usage"), dict) else {}
             reasoning = str(message_payload.get("reasoning") or "")
@@ -429,14 +465,23 @@ def _call_openrouter_structured_decision(
             if not _is_retryable_openrouter_error(exc) or attempt >= OPENROUTER_GENERATE_MAX_RETRIES:
                 break
             sleep_seconds = min(8.0, 2.0 ** (attempt - 1))
-            logger.warning(
-                "OpenRouter futures %s call failed (attempt %s/%s): %s. Retrying in %ss.",
-                context_label,
-                attempt,
-                OPENROUTER_GENERATE_MAX_RETRIES,
-                exc,
-                sleep_seconds,
-            )
+            if isinstance(exc, OpenRouterEmptyContentError):
+                logger.info(
+                    "OpenRouter futures %s call returned empty content (attempt %s/%s). Retrying in %ss.",
+                    context_label,
+                    attempt,
+                    OPENROUTER_GENERATE_MAX_RETRIES,
+                    sleep_seconds,
+                )
+            else:
+                logger.warning(
+                    "OpenRouter futures %s call failed (attempt %s/%s): %s. Retrying in %ss.",
+                    context_label,
+                    attempt,
+                    OPENROUTER_GENERATE_MAX_RETRIES,
+                    exc,
+                    sleep_seconds,
+                )
             time.sleep(sleep_seconds)
 
     if last_error is not None:
@@ -453,6 +498,7 @@ def evaluate_trade_direction(
     reasoning_effort: str,
     model: str = OPENROUTER_DIRECTION_MODEL,
     max_tokens: int = 8192,
+    timeout_seconds: float = OPENROUTER_DEFAULT_TIMEOUT_SECONDS,
     analysis_sink: Optional[Dict[str, Any]] = None,
     decision_mode: str = "direction",
 ) -> Optional[TradeDirectionDecision]:
@@ -479,6 +525,7 @@ def evaluate_trade_direction(
         response_model=TradeDirectionDecision,
         model=model,
         max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
         context_label=decision_mode,
     )
     if call_result is None:
@@ -503,6 +550,7 @@ def evaluate_trade_direction(
         reasoning_details=call_result.reasoning_details,
         model=model,
         reasoning_effort=reasoning_effort,
+        timeout_seconds=timeout_seconds,
         decision_mode=decision_mode,
     )
 
@@ -533,6 +581,8 @@ def evaluate_entry_direction(**kwargs: Any) -> Optional[TradeDirectionDecision]:
 
 __all__ = [
     "OPENROUTER_DIRECTION_MODEL",
+    "OPENROUTER_DEFAULT_REASONING_EFFORT",
+    "OPENROUTER_DEFAULT_TIMEOUT_SECONDS",
     "OPENROUTER_MAX_REASONING_EFFORT",
     "OpenRouterStructuredResponse",
     "TradeDirectionDecision",

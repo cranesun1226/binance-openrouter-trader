@@ -14,8 +14,9 @@ ai_prompt_candle_count: 100
 
 # OpenRouter / DeepSeek V4 Flash
 openrouter_model: deepseek/deepseek-v4-flash
-openrouter_reasoning_effort: xhigh
+openrouter_reasoning_effort: high
 openrouter_max_tokens: 8192
+openrouter_timeout_seconds: 300.0
 
 # Portfolio allocation
 fixed_leverage: 1

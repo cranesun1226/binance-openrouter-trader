@@ -2,7 +2,7 @@
 
 OpenRouter-powered six-slot Binance USDT-M futures trading bot.
 
-This project runs a 1x-leverage portfolio loop across four fixed passive markets and two dynamically screened active markets. Each slot is evaluated one symbol at a time by OpenRouter using `deepseek/deepseek-v4-flash` with high reasoning effort, then managed with market entries/exits, rebalancing, stop-loss synchronization, and Telegram reporting.
+This project runs a 1x-leverage portfolio loop across four fixed passive markets and two dynamically screened active markets. Each slot is evaluated one symbol at a time by OpenRouter using `deepseek/deepseek-v4-flash` with `high` reasoning effort, then managed with market entries/exits, rebalancing, stop-loss synchronization, and Telegram reporting.
 
 > This software is for research and automation experiments. It is not financial advice. Futures trading can lose money quickly, and live mode sends real Binance Futures orders.
 
@@ -12,7 +12,7 @@ This project runs a 1x-leverage portfolio loop across four fixed passive markets
 
 - OpenRouter 기반 LLM 판단
   - 기본 모델: `deepseek/deepseek-v4-flash`
-  - reasoning effort: `xhigh` (maximum reasoning; `max` is normalized to `xhigh`)
+  - reasoning effort: `high` (`max` is still normalized to `xhigh`)
   - 응답은 `LONG` 또는 `SHORT`만 허용
 - 6개 슬롯 포트폴리오
   - Passive: `CLUSDT`, `XAUUSDT`, `QQQUSDT`, `BTCUSDT`
@@ -86,7 +86,9 @@ trigger_pct_usdt: 1.0
 ai_prompt_timeframe: 1h
 ai_prompt_candle_count: 100
 openrouter_model: deepseek/deepseek-v4-flash
-openrouter_reasoning_effort: xhigh
+openrouter_reasoning_effort: high
+openrouter_max_tokens: 8192
+openrouter_timeout_seconds: 300.0
 fixed_leverage: 1
 capital_usage_ratio: 0.99
 rebalance_threshold_pct: 0.03
@@ -197,7 +199,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 
 - OpenRouter-based LLM decisions
   - Default model: `deepseek/deepseek-v4-flash`
-  - Reasoning effort: `xhigh` (maximum reasoning; `max` is normalized to `xhigh`)
+  - Reasoning effort: `high` (`max` is still normalized to `xhigh`)
   - The bot accepts only `LONG` or `SHORT`
 - Six-slot portfolio
   - Passive: `CLUSDT`, `XAUUSDT`, `QQQUSDT`, `BTCUSDT`
@@ -271,7 +273,9 @@ trigger_pct_usdt: 1.0
 ai_prompt_timeframe: 1h
 ai_prompt_candle_count: 100
 openrouter_model: deepseek/deepseek-v4-flash
-openrouter_reasoning_effort: xhigh
+openrouter_reasoning_effort: high
+openrouter_max_tokens: 8192
+openrouter_timeout_seconds: 300.0
 fixed_leverage: 1
 capital_usage_ratio: 0.99
 rebalance_threshold_pct: 0.03

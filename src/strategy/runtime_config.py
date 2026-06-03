@@ -20,8 +20,9 @@ CONFIG_PATH = os.path.join(ROOT_DIR, "setting.yaml")
 
 # Runtime defaults live here so optional keys can be omitted from setting.yaml.
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash"
-DEFAULT_OPENROUTER_REASONING_EFFORT = "xhigh"
+DEFAULT_OPENROUTER_REASONING_EFFORT = "high"
 DEFAULT_OPENROUTER_MAX_TOKENS = 8192
+DEFAULT_OPENROUTER_TIMEOUT_SECONDS = 300.0
 DEFAULT_AI_PROMPT_TIMEFRAME = "1h"
 DEFAULT_AI_PROMPT_CANDLE_COUNT = 100
 DEFAULT_TRIGGER_PCT_USDT = 1.0
@@ -45,6 +46,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "openrouter_model": DEFAULT_OPENROUTER_MODEL,
     "openrouter_reasoning_effort": DEFAULT_OPENROUTER_REASONING_EFFORT,
     "openrouter_max_tokens": DEFAULT_OPENROUTER_MAX_TOKENS,
+    "openrouter_timeout_seconds": DEFAULT_OPENROUTER_TIMEOUT_SECONDS,
     "passive_symbols": list(DEFAULT_PASSIVE_SYMBOLS),
     "active_targets": list(DEFAULT_ACTIVE_TARGETS),
     "active_candidate_pool_size": DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE,

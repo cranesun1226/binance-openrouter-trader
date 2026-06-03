@@ -8,7 +8,7 @@ This document describes the exact OpenRouter request shape used by Binance OpenR
 
 - One OpenRouter call is made for one symbol at a time.
 - The model is `deepseek/deepseek-v4-flash`.
-- The maximum reasoning setting is represented as `xhigh`; if `max` is provided, the runtime normalizes it to `xhigh`.
+- The default reasoning setting is `high`; if `max` is provided, the runtime normalizes it to `xhigh`.
 - The model receives only the supplied symbol, live reference price, and close-price arrays.
 - The prompt explicitly tells the model to consider all 100 supplied close prices in balance instead of focusing only on the most recent few candles.
 - The accepted final answer is strictly one JSON object: `{"decision":"LONG"}` or `{"decision":"SHORT"}`.
@@ -30,7 +30,7 @@ This document describes the exact OpenRouter request shape used by Binance OpenR
     }
   ],
   "reasoning": {
-    "effort": "xhigh",
+    "effort": "high",
     "exclude": false
   },
   "response_format": {
@@ -54,6 +54,8 @@ This document describes the exact OpenRouter request shape used by Binance OpenR
   "max_tokens": 8192
 }
 ```
+
+The HTTP client timeout is configured separately as `openrouter_timeout_seconds` and defaults to `300.0` seconds. This timeout is not sent as an OpenRouter JSON field.
 
 ## User Prompt Template
 
@@ -91,7 +93,7 @@ The prompt does not include account balance, open positions, order history, orde
 
 For every OpenRouter decision, the runtime stores:
 
-- `openrouter_ai_<mode>_input.json`: model, reasoning effort, prompt, and payload.
+- `openrouter_ai_<mode>_input.json`: model, reasoning effort, timeout, prompt, and payload.
 - `openrouter_ai_<mode>_output.json`: parsed decision, raw response, reasoning, usage, estimated cost, and full response payload.
 
 These files are written under `db/` and may contain live trading context. Review them before sharing logs in a public issue or pull request.
@@ -100,7 +102,7 @@ These files are written under `db/` and may contain live trading context. Review
 
 - 한 번의 LLM 호출은 반드시 한 종목만 판단합니다.
 - 기본 모델은 `deepseek/deepseek-v4-flash`입니다.
-- 최대 사고 설정은 런타임에서 `xhigh`로 사용합니다. 설정값에 `max`를 넣어도 `xhigh`로 정규화됩니다.
+- 기본 사고 설정은 런타임에서 `high`로 사용합니다. 설정값에 `max`를 넣으면 `xhigh`로 정규화됩니다.
 - LLM에는 종목명, 현재 기준가, 1시간봉 종가 배열만 전달됩니다.
 - 프롬프트는 최신 몇 개 봉만 보지 말고 100개 종가 전체를 균형 있게 보라고 명시합니다.
 - 최종 응답은 strict JSON schema로 `LONG` 또는 `SHORT`만 허용합니다.
