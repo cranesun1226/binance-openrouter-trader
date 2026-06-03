@@ -57,7 +57,20 @@ MAX_DB_CYCLE_DIRS = 20
 STATE_VERSION = "1.0.0"
 TRIGGER_PRICE_DIGITS = 8
 MANAGED_DECISIONS = {"LONG", "SHORT"}
+MATERIAL_POSITION_RECORD_ACTIONS = {
+    "closed_position",
+    "entry_order_failed",
+    "increased_position",
+    "opened_new_position",
+    "rebalance_reduce_failed",
+    "reduced_position",
+    "reverse_close_failed",
+    "reverse_reopen_failed",
+    "reversed_position",
+    "switch_close_failed",
+}
 NotificationCallback = Optional[Callable[[str, Dict[str, Any]], None]]
+CycleDirFactory = Callable[[], str]
 
 
 @dataclass(frozen=True)
@@ -346,6 +359,34 @@ def _persist_screener_output(slot_dir: str, payload: Dict[str, Any]) -> None:
         _write_json(os.path.join(slot_dir, "active_screener_output.json"), payload)
     except Exception as exc:
         logger.warning("Failed to persist active screener output for %s: %s", slot_dir, exc)
+
+
+def _has_changed_stop_sync(payload: Dict[str, Any]) -> bool:
+    stop_sync = payload.get("stop_sync")
+    return isinstance(stop_sync, dict) and bool(stop_sync.get("changed"))
+
+
+def _has_material_position_record(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    action = str(payload.get("action") or "").strip()
+    if action in MATERIAL_POSITION_RECORD_ACTIONS or _has_changed_stop_sync(payload):
+        return True
+    for child_key in ("execution", "close"):
+        if _has_material_position_record(payload.get(child_key)):
+            return True
+    return False
+
+
+def _should_persist_cycle_output(result: Dict[str, Any]) -> bool:
+    if bool(result.get("ai_triggered")):
+        return True
+    if result.get("unmanaged_position_closes"):
+        return True
+    slot_results = result.get("slot_results")
+    if not isinstance(slot_results, list):
+        return False
+    return any(_has_material_position_record(slot_result) for slot_result in slot_results)
 
 
 def _emit_notification(notification_callback: NotificationCallback, event_name: str, payload: Dict[str, Any]) -> None:
@@ -951,7 +992,6 @@ def _screen_active_candidate(
     slot: PortfolioSlot,
     config: Dict[str, Any],
     excluded_symbols: Sequence[str],
-    slot_dir: str,
 ) -> Dict[str, Any]:
     screener_output = screen_active_symbol(
         target_abs_change_pct=float(slot.active_target_abs_change_pct or 0.0),
@@ -962,7 +1002,6 @@ def _screen_active_candidate(
         retries=int(config["screener_retries"]),
         request_sleep=float(config["screener_request_sleep"]),
     )
-    _persist_screener_output(slot_dir, screener_output)
     selection = screener_output.get("selection") if isinstance(screener_output, dict) else {}
     selected_symbol = _normalize_symbol((selection or {}).get("symbol"))
     if not selected_symbol:
@@ -971,6 +1010,7 @@ def _screen_active_candidate(
         "symbol": selected_symbol,
         "selection": selection,
         "metadata": screener_output.get("metadata", {}),
+        "_screener_output": screener_output,
     }
 
 
@@ -981,12 +1021,13 @@ def _evaluate_slot_direction(
     reference_price: float,
     config: Dict[str, Any],
     as_of_ms: int,
-    cycle_dir: str,
+    cycle_dir_factory: CycleDirFactory,
     notification_callback: NotificationCallback,
     position: Optional[Dict[str, Any]],
     trigger_info: Dict[str, Any],
     decision_mode: str,
 ) -> tuple[Optional[str], Dict[str, Any], Dict[str, Any]]:
+    cycle_dir = cycle_dir_factory()
     slot_dir = _slot_artifact_dir(cycle_dir, slot.slot_id)
     market_context = _fetch_prompt_market_context(
         symbol=symbol,
@@ -1130,7 +1171,7 @@ def _run_passive_slot(
     account_overview: Dict[str, float],
     position: Optional[Dict[str, Any]],
     as_of_ms: int,
-    cycle_dir: str,
+    cycle_dir_factory: CycleDirFactory,
     notification_callback: NotificationCallback,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     symbol = str(slot.symbol)
@@ -1205,7 +1246,7 @@ def _run_passive_slot(
         reference_price=reference_price,
         config=config,
         as_of_ms=as_of_ms,
-        cycle_dir=cycle_dir,
+        cycle_dir_factory=cycle_dir_factory,
         notification_callback=notification_callback,
         position=position,
         trigger_info=trigger_info,
@@ -1297,7 +1338,7 @@ def _run_active_slot(
     open_positions: Sequence[Dict[str, Any]],
     reserved_symbols: set[str],
     as_of_ms: int,
-    cycle_dir: str,
+    cycle_dir_factory: CycleDirFactory,
     notification_callback: NotificationCallback,
 ) -> tuple[Dict[str, Any], Dict[str, Any], Optional[str]]:
     state_symbol = _normalize_symbol(slot_state.get("symbol"))
@@ -1374,7 +1415,7 @@ def _run_active_slot(
             reference_price=reference_price,
             config=config,
             as_of_ms=as_of_ms,
-            cycle_dir=cycle_dir,
+            cycle_dir_factory=cycle_dir_factory,
             notification_callback=notification_callback,
             position=position,
             trigger_info=trigger_info,
@@ -1431,7 +1472,6 @@ def _run_active_slot(
         slot_state = _clear_active_slot_state(slot_state)
         open_positions = [row for row in open_positions if _position_symbol(row) != current_symbol]
 
-    slot_dir = _slot_artifact_dir(cycle_dir, slot.slot_id)
     try:
         candidate = _screen_active_candidate(
             slot=slot,
@@ -1442,7 +1482,6 @@ def _run_active_slot(
                 reserved_symbols=reserved_symbols,
                 old_symbol=current_symbol,
             ),
-            slot_dir=slot_dir,
         )
     except Exception as exc:
         result["action"] = "screener_selection_failed"
@@ -1450,6 +1489,7 @@ def _run_active_slot(
         return result, slot_state, None
 
     candidate_symbol = str(candidate["symbol"])
+    screener_output = candidate.pop("_screener_output", None)
     result["symbol"] = candidate_symbol
     result["candidate_symbol"] = candidate_symbol
     result["screener"] = candidate
@@ -1473,13 +1513,16 @@ def _run_active_slot(
         }
     )
     trigger_info["reason"] = "active_candidate_selected"
+    slot_dir = _slot_artifact_dir(cycle_dir_factory(), slot.slot_id)
+    if isinstance(screener_output, dict):
+        _persist_screener_output(slot_dir, screener_output)
     decision, ai_analysis, prompt_payload = _evaluate_slot_direction(
         slot=slot,
         symbol=candidate_symbol,
         reference_price=reference_price,
         config=config,
         as_of_ms=as_of_ms,
-        cycle_dir=cycle_dir,
+        cycle_dir_factory=cycle_dir_factory,
         notification_callback=notification_callback,
         position=None,
         trigger_info=trigger_info,
@@ -1543,7 +1586,7 @@ def run_portfolio_cycle(
     slots = _build_portfolio_slots(config)
     resolved_as_of_ms = _resolve_as_of_ms(as_of_ms)
     portfolio_state = _normalize_portfolio_state(state, slots)
-    cycle_dir = _create_cycle_dir()
+    cycle_dir: Optional[str] = None
     result: Dict[str, Any] = {
         "version": STATE_VERSION,
         "success": False,
@@ -1564,25 +1607,29 @@ def run_portfolio_cycle(
         },
     }
 
+    def ensure_cycle_dir() -> str:
+        nonlocal cycle_dir
+        if not cycle_dir:
+            cycle_dir = _create_cycle_dir()
+            result["cycle_dir"] = cycle_dir
+        return cycle_dir
+
     try:
         api_key, api_secret = get_binance_credentials()
     except ValueError as exc:
         result["action"] = "credentials_error"
         result["error"] = str(exc)
-        _persist_cycle_output(result)
         return result
 
     account_overview = get_account_overview(api_key, api_secret)
     if not isinstance(account_overview, dict):
         result["action"] = "account_overview_unavailable"
-        _persist_cycle_output(result)
         return result
     result["account_overview"] = dict(account_overview)
 
     positions = get_positions(api_key, api_secret)
     if positions is None:
         result["action"] = "positions_fetch_failed"
-        _persist_cycle_output(result)
         return result
 
     managed_symbols = _managed_state_symbols(portfolio_state)
@@ -1619,7 +1666,7 @@ def run_portfolio_cycle(
                 account_overview=account_overview,
                 position=position,
                 as_of_ms=resolved_as_of_ms,
-                cycle_dir=cycle_dir,
+                cycle_dir_factory=ensure_cycle_dir,
                 notification_callback=notification_callback,
             )
             portfolio_state["slots"][slot.slot_id] = updated_slot_state
@@ -1636,7 +1683,7 @@ def run_portfolio_cycle(
                 open_positions=positions,
                 reserved_symbols=reserved_symbols,
                 as_of_ms=resolved_as_of_ms,
-                cycle_dir=cycle_dir,
+                cycle_dir_factory=ensure_cycle_dir,
                 notification_callback=notification_callback,
             )
             portfolio_state["slots"][slot.slot_id] = updated_slot_state
@@ -1668,7 +1715,9 @@ def run_portfolio_cycle(
             "position",
         ):
             result[key] = last_ai_result.get(key)
-    _persist_cycle_output(result)
+    if _should_persist_cycle_output(result):
+        ensure_cycle_dir()
+        _persist_cycle_output(result)
     logger.info(
         "Portfolio cycle completed | %s",
         format_log_details(
@@ -1677,7 +1726,7 @@ def run_portfolio_cycle(
                 "action": result["action"],
                 "ai_triggered": result["ai_triggered"],
                 "slot_count": len(result["slot_results"]),
-                "cycle_dir": cycle_dir,
+                "cycle_dir": result.get("cycle_dir"),
             }
         ),
     )

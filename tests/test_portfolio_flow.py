@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -39,6 +40,16 @@ def _active_slot():
     )
 
 
+def _passive_slot():
+    return portfolio_strategy.PortfolioSlot(
+        slot_id="passive_cl",
+        label="CLUSDT",
+        kind="passive",
+        target_margin_ratio=0.125,
+        symbol="CLUSDT",
+    )
+
+
 def _long_position(symbol="ETHUSDT"):
     return {
         "symbol": symbol,
@@ -52,6 +63,110 @@ def _long_position(symbol="ETHUSDT"):
 
 
 class PortfolioFlowTests(unittest.TestCase):
+    def test_non_ai_cycle_does_not_create_db_artifact(self):
+        slot = _passive_slot()
+        slot_state = {"slot_id": "passive_cl", "kind": "passive", "symbol": "CLUSDT"}
+        slot_result = {
+            "slot_id": "passive_cl",
+            "slot_label": "CLUSDT",
+            "symbol": "CLUSDT",
+            "success": True,
+            "action": "kept_position_size",
+            "ai_triggered": False,
+        }
+
+        with patch("src.strategy.portfolio_strategy._load_strategy_config", return_value=_config()), patch(
+            "src.strategy.portfolio_strategy._build_portfolio_slots", return_value=[slot]
+        ), patch("src.strategy.portfolio_strategy.get_binance_credentials", return_value=("key", "secret")), patch(
+            "src.strategy.portfolio_strategy.get_account_overview",
+            return_value={"equity": 1000.0, "available_balance": 500.0},
+        ), patch("src.strategy.portfolio_strategy.get_positions", return_value=[]), patch(
+            "src.strategy.portfolio_strategy._run_passive_slot", return_value=(slot_result, slot_state)
+        ), patch(
+            "src.strategy.portfolio_strategy._create_cycle_dir",
+            side_effect=AssertionError("non-AI cycle should not create db artifact"),
+        ):
+            result = portfolio_strategy.run_portfolio_cycle(state={"version": portfolio_strategy.STATE_VERSION})
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["ai_triggered"])
+        self.assertIsNone(result["cycle_dir"])
+
+    def test_ai_cycle_persists_db_artifact(self):
+        slot = _passive_slot()
+        slot_state = {
+            "slot_id": "passive_cl",
+            "kind": "passive",
+            "symbol": "CLUSDT",
+            "last_ai_decision": "SHORT",
+        }
+        slot_result = {
+            "slot_id": "passive_cl",
+            "slot_label": "CLUSDT",
+            "symbol": "CLUSDT",
+            "success": True,
+            "action": "kept_position_by_ai",
+            "ai_triggered": True,
+            "ai_decision": "SHORT",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "src.strategy.portfolio_strategy._load_strategy_config", return_value=_config()
+        ), patch("src.strategy.portfolio_strategy._build_portfolio_slots", return_value=[slot]), patch(
+            "src.strategy.portfolio_strategy.get_binance_credentials", return_value=("key", "secret")
+        ), patch(
+            "src.strategy.portfolio_strategy.get_account_overview",
+            return_value={"equity": 1000.0, "available_balance": 500.0},
+        ), patch("src.strategy.portfolio_strategy.get_positions", return_value=[]), patch(
+            "src.strategy.portfolio_strategy._run_passive_slot", return_value=(slot_result, slot_state)
+        ), patch(
+            "src.strategy.portfolio_strategy._create_cycle_dir", return_value=temp_dir
+        ):
+            result = portfolio_strategy.run_portfolio_cycle(state={"version": portfolio_strategy.STATE_VERSION})
+            artifact_exists = os.path.exists(os.path.join(temp_dir, "portfolio_cycle_output.json"))
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["ai_triggered"])
+        self.assertEqual(result["cycle_dir"], temp_dir)
+        self.assertTrue(artifact_exists)
+
+    def test_material_position_event_persists_db_artifact_without_ai(self):
+        slot = _passive_slot()
+        slot_state = {"slot_id": "passive_cl", "kind": "passive", "symbol": "CLUSDT"}
+        slot_result = {
+            "slot_id": "passive_cl",
+            "slot_label": "CLUSDT",
+            "symbol": "CLUSDT",
+            "success": True,
+            "action": "kept_position_size",
+            "ai_triggered": False,
+            "execution": {
+                "success": True,
+                "action": "kept_position_size",
+                "stop_sync": {"success": True, "changed": True},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "src.strategy.portfolio_strategy._load_strategy_config", return_value=_config()
+        ), patch("src.strategy.portfolio_strategy._build_portfolio_slots", return_value=[slot]), patch(
+            "src.strategy.portfolio_strategy.get_binance_credentials", return_value=("key", "secret")
+        ), patch(
+            "src.strategy.portfolio_strategy.get_account_overview",
+            return_value={"equity": 1000.0, "available_balance": 500.0},
+        ), patch("src.strategy.portfolio_strategy.get_positions", return_value=[]), patch(
+            "src.strategy.portfolio_strategy._run_passive_slot", return_value=(slot_result, slot_state)
+        ), patch(
+            "src.strategy.portfolio_strategy._create_cycle_dir", return_value=temp_dir
+        ):
+            result = portfolio_strategy.run_portfolio_cycle(state={"version": portfolio_strategy.STATE_VERSION})
+            artifact_exists = os.path.exists(os.path.join(temp_dir, "portfolio_cycle_output.json"))
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["ai_triggered"])
+        self.assertEqual(result["cycle_dir"], temp_dir)
+        self.assertTrue(artifact_exists)
+
     def test_active_existing_same_direction_does_not_rescreen(self):
         slot = _active_slot()
         slot_state = {
@@ -85,7 +200,7 @@ class PortfolioFlowTests(unittest.TestCase):
                 open_positions=[_long_position()],
                 reserved_symbols=set(),
                 as_of_ms=1,
-                cycle_dir=temp_dir,
+                cycle_dir_factory=lambda: temp_dir,
                 notification_callback=None,
             )
 
@@ -96,6 +211,40 @@ class PortfolioFlowTests(unittest.TestCase):
         mocked_ai.assert_called_once()
         mocked_rebalance.assert_called_once()
         mocked_screen.assert_not_called()
+
+    def test_active_screener_failure_does_not_create_db_artifact_without_position_event(self):
+        slot = _active_slot()
+        slot_state = {
+            "slot_id": "active_1",
+            "kind": "active",
+            "symbol": None,
+        }
+
+        def fail_cycle_dir():
+            raise AssertionError("screener failure should not create db artifact")
+
+        with patch(
+            "src.strategy.portfolio_strategy._screen_active_candidate",
+            side_effect=RuntimeError("screener unavailable"),
+        ):
+            result, updated_state, active_symbol = portfolio_strategy._run_active_slot(
+                slot=slot,
+                slot_state=slot_state,
+                config=_config(),
+                api_key="key",
+                api_secret="secret",
+                account_overview={"equity": 1000.0, "available_balance": 500.0},
+                open_positions=[],
+                reserved_symbols=set(),
+                as_of_ms=1,
+                cycle_dir_factory=fail_cycle_dir,
+                notification_callback=None,
+            )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["action"], "screener_selection_failed")
+        self.assertIsNone(active_symbol)
+        self.assertEqual(updated_state, slot_state)
 
     def test_active_opposite_direction_closes_then_screens_new_candidate(self):
         slot = _active_slot()
@@ -141,7 +290,7 @@ class PortfolioFlowTests(unittest.TestCase):
                 open_positions=[_long_position()],
                 reserved_symbols={"CLUSDT"},
                 as_of_ms=1,
-                cycle_dir=temp_dir,
+                cycle_dir_factory=lambda: temp_dir,
                 notification_callback=None,
             )
 

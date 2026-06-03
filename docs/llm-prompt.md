@@ -96,7 +96,9 @@ For every OpenRouter decision, the runtime stores:
 - `openrouter_ai_<mode>_input.json`: model, reasoning effort, timeout, prompt, and payload.
 - `openrouter_ai_<mode>_output.json`: parsed decision, raw response, reasoning, usage, estimated cost, and full response payload.
 
-These files are written under `db/` and may contain live trading context. Review them before sharing logs in a public issue or pull request.
+These files are written under `db/` only when an LLM decision is triggered. The runtime also stores cycle output for material non-LLM position events, such as a stop-loss resync or an unmanaged position close. Routine one-minute mechanical checks are intentionally not persisted to `db/`.
+
+`db/` keeps at most the latest 20 cycle directories. These artifacts may contain live trading context. Review them before sharing logs in a public issue or pull request.
 
 ## 한국어 요약
 

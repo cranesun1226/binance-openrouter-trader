@@ -191,7 +191,8 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 
 - `.env`, `log/`, `db/`, `scheduler_state.json`은 `.gitignore`에 포함되어 있습니다.
 - API key, Telegram token, 실제 계좌 정보, live cycle output은 절대 커밋하지 마세요.
-- `db/`에는 LLM 입출력과 차트 산출물이 저장됩니다. 공개 이슈나 PR에 첨부하기 전에 내용을 확인하세요.
+- `db/`에는 LLM 판단이 발생한 사이클과 중요한 포지션 이벤트의 입출력/차트 산출물이 저장됩니다. 일반 1분 점검 사이클은 저장하지 않으며, 최대 20개 cycle 디렉터리만 유지합니다.
+- `log/ai_trader.log`는 10MB 단위로 회전하며 최대 5개 백업 파일을 유지합니다.
 
 ## LLM Auto Trading
 
@@ -378,7 +379,8 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 
 - `.env`, `log/`, `db/`, and `scheduler_state.json` are ignored by Git.
 - Never commit API keys, Telegram tokens, account data, or live cycle outputs.
-- `db/` stores LLM inputs/outputs and chart artifacts. Review files before sharing them in issues or pull requests.
+- `db/` stores LLM-triggered cycle artifacts and important position-event records only. Routine one-minute mechanical checks are not written to `db/`, and only the latest 20 cycle directories are retained.
+- `log/ai_trader.log` rotates at 10MB and keeps up to 5 backup files.
 
 ## License
 
