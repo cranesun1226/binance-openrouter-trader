@@ -6,6 +6,24 @@ from src.binance import trade_position
 
 
 class TradePositionTests(unittest.TestCase):
+    def test_short_position_negative_notional_becomes_positive_position_value(self):
+        payload = trade_position._normalize_position_risk_payload(
+            {
+                "symbol": "ETHUSDT",
+                "positionAmt": "-2",
+                "entryPrice": "100.5",
+                "notional": "-201",
+            }
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["side"], "Sell")
+        self.assertEqual(payload["positionValue"], 201.0)
+
+        metrics = trade_position.calculate_position_metrics(payload)
+        self.assertEqual(metrics["direction"], "short")
+        self.assertEqual(metrics["position_value"], 201.0)
+
     def test_tradfi_agreement_error_is_not_retried(self):
         with patch(
             "src.binance.trade_position.adjust_qty_for_symbol",

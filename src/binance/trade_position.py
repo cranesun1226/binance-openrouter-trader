@@ -502,11 +502,14 @@ def calculate_position_metrics(position: Optional[Dict[str, Any]]) -> Dict[str, 
     )
     mark_price = _first_valid_float(payload.get("markPrice"), payload.get("mark_price"), positive_only=True)
     leverage = _first_valid_float(payload.get("leverage"), positive_only=True)
-    position_value = _first_valid_float(
-        payload.get("positionValue"),
-        payload.get("notional"),
-        positive_only=True,
-    )
+    position_value = _first_valid_float(payload.get("positionValue"), positive_only=True)
+    if position_value is None:
+        signed_position_value = _first_valid_float(
+            payload.get("notional"),
+            payload.get("positionValue"),
+        )
+        if signed_position_value is not None and signed_position_value != 0.0:
+            position_value = abs(signed_position_value)
     if position_value is None and mark_price is not None and size is not None:
         position_value = abs(mark_price * size)
     if position_value is None and entry_price is not None and size is not None:
@@ -778,14 +781,8 @@ def _normalize_position_risk_payload(row: Dict[str, Any]) -> Optional[Dict[str, 
     payload["symbol"] = symbol
     payload["positionAmt"] = position_amt
     payload["size"] = abs(position_amt)
-    payload["positionValue"] = abs(
-        _first_valid_float(
-            row.get("notional"),
-            row.get("positionValue"),
-            positive_only=True,
-        )
-        or 0.0
-    )
+    signed_position_value = _first_valid_float(row.get("notional"), row.get("positionValue"))
+    payload["positionValue"] = abs(signed_position_value) if signed_position_value is not None else 0.0
     payload["side"] = "Buy" if position_amt > 0.0 else "Sell"
     return payload
 
