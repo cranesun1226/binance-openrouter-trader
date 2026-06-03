@@ -23,6 +23,10 @@ from src.infra.logger import format_log_details, get_logger
 logger = get_logger("active_screener")
 
 
+class NoActiveCandidateError(RuntimeError):
+    """Raised when screening succeeds but no symbol matches the strategy filters."""
+
+
 def safe_float(value: Any, default: float = 0.0) -> float:
     try:
         parsed = float(value)
@@ -105,6 +109,35 @@ def build_usdt_perpetual_universe(exchange_info: Dict[str, Any], quote: str = "U
     return universe
 
 
+def is_tradfi_symbol_info(row: Dict[str, Any]) -> bool:
+    contract_type = str(row.get("contractType") or "").strip().upper()
+    if contract_type == "TRADIFI_PERPETUAL":
+        return True
+    subtypes = row.get("underlyingSubType")
+    if isinstance(subtypes, (list, tuple, set)):
+        return any(str(subtype or "").strip().lower() == "tradfi" for subtype in subtypes)
+    return str(subtypes or "").strip().lower() == "tradfi"
+
+
+def build_usdt_tradfi_perpetual_universe(exchange_info: Dict[str, Any], quote: str = "USDT") -> set[str]:
+    normalized_quote = str(quote or "USDT").strip().upper()
+    universe: set[str] = set()
+    for row in exchange_info.get("symbols", []) or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        if str(row.get("status") or "").upper() != "TRADING":
+            continue
+        if str(row.get("quoteAsset") or "").upper() != normalized_quote:
+            continue
+        if not is_tradfi_symbol_info(row):
+            continue
+        universe.add(symbol)
+    return universe
+
+
 def normalize_ticker_row(symbol: str, ticker: Dict[str, Any], *, target_abs_change_pct: float) -> Dict[str, Any]:
     price_change_pct = safe_float(ticker.get("priceChangePercent"))
     abs_change = abs(price_change_pct)
@@ -127,6 +160,8 @@ def select_active_symbol_from_tickers(
     target_abs_change_pct: float,
     excluded_symbols: Sequence[str],
     candidate_pool_size: int = 10,
+    min_abs_change_pct: Optional[float] = None,
+    max_abs_change_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     excluded = {str(symbol or "").strip().upper() for symbol in excluded_symbols if str(symbol or "").strip()}
     rows: list[Dict[str, Any]] = []
@@ -138,6 +173,11 @@ def select_active_symbol_from_tickers(
             continue
         row = normalize_ticker_row(symbol, ticker, target_abs_change_pct=target_abs_change_pct)
         if row["last_price"] <= 0.0 or row["quote_volume_24h"] <= 0.0:
+            continue
+        abs_change = safe_float(row.get("abs_price_change_pct_24h"))
+        if min_abs_change_pct is not None and abs_change < float(min_abs_change_pct):
+            continue
+        if max_abs_change_pct is not None and abs_change > float(max_abs_change_pct):
             continue
         rows.append(row)
 
@@ -164,6 +204,8 @@ def select_active_symbol_from_tickers(
         "top_candidates": top_candidates,
         "candidate_count": len(rows),
         "target_abs_change_pct": float(target_abs_change_pct),
+        "min_abs_change_pct": min_abs_change_pct,
+        "max_abs_change_pct": max_abs_change_pct,
         "excluded_symbols": sorted(excluded),
     }
 
@@ -207,12 +249,13 @@ def screen_active_symbol(
         candidate_pool_size=candidate_pool_size,
     )
     if not selection.get("symbol"):
-        raise RuntimeError("active screener did not return a tradable candidate")
+        raise NoActiveCandidateError("active screener did not return a tradable candidate")
     return {
         "metadata": {
             "captured_at": utc_now_iso(),
             "base_url": client.base_url,
             "quote": str(quote or "USDT").upper(),
+            "screening_mode": "standard",
             "universe_symbols": len(universe),
             "ticker_count": len(tickers),
             "candidate_pool_size": max(1, int(candidate_pool_size)),
@@ -221,10 +264,78 @@ def screen_active_symbol(
     }
 
 
+def screen_active_tradfi_symbol(
+    *,
+    target_abs_change_pct: float,
+    excluded_symbols: Sequence[str],
+    min_abs_change_pct: float = 3.0,
+    max_abs_change_pct: float = 5.0,
+    quote: str = "USDT",
+    candidate_pool_size: int = 10,
+    timeout: float = 30.0,
+    retries: int = 3,
+    request_sleep: float = 0.10,
+) -> Dict[str, Any]:
+    client = BinanceActiveMarketDataClient(
+        timeout=timeout,
+        retries=retries,
+        request_sleep=request_sleep,
+    )
+    logger.info(
+        "Active TradFi symbol screening started | %s",
+        format_log_details(
+            {
+                "target_abs_change_pct": target_abs_change_pct,
+                "min_abs_change_pct": min_abs_change_pct,
+                "max_abs_change_pct": max_abs_change_pct,
+                "quote": quote,
+                "candidate_pool_size": candidate_pool_size,
+                "excluded_symbols": sorted(
+                    {str(symbol or '').strip().upper() for symbol in excluded_symbols if str(symbol or '').strip()}
+                ),
+            }
+        ),
+    )
+    exchange_info = client.exchange_info()
+    universe = build_usdt_tradfi_perpetual_universe(exchange_info, quote=quote)
+    tickers = client.ticker_24hr()
+    selection = select_active_symbol_from_tickers(
+        tickers,
+        universe=universe,
+        target_abs_change_pct=target_abs_change_pct,
+        excluded_symbols=excluded_symbols,
+        candidate_pool_size=candidate_pool_size,
+        min_abs_change_pct=float(min_abs_change_pct),
+        max_abs_change_pct=float(max_abs_change_pct),
+    )
+    if not selection.get("symbol"):
+        raise NoActiveCandidateError(
+            f"active TradFi screener found no candidate with abs(24h change) between {min_abs_change_pct}% and {max_abs_change_pct}%"
+        )
+    return {
+        "metadata": {
+            "captured_at": utc_now_iso(),
+            "base_url": client.base_url,
+            "quote": str(quote or "USDT").upper(),
+            "screening_mode": "tradfi",
+            "universe_symbols": len(universe),
+            "ticker_count": len(tickers),
+            "candidate_pool_size": max(1, int(candidate_pool_size)),
+            "min_abs_change_pct": float(min_abs_change_pct),
+            "max_abs_change_pct": float(max_abs_change_pct),
+        },
+        "selection": selection,
+    }
+
+
 __all__ = [
     "BinanceActiveMarketDataClient",
+    "NoActiveCandidateError",
+    "build_usdt_tradfi_perpetual_universe",
     "build_usdt_perpetual_universe",
+    "is_tradfi_symbol_info",
     "normalize_ticker_row",
     "screen_active_symbol",
+    "screen_active_tradfi_symbol",
     "select_active_symbol_from_tickers",
 ]

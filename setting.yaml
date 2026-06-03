@@ -31,11 +31,15 @@ passive_symbols:
   - QQQUSDT
   - BTCUSDT
 
-# Active slots use abs(abs(24h change %) - target) closeness.
+# active1 uses crypto USDT perpetuals near 4%.
+# active2 uses TradFi USDT perpetuals with abs(24h change %) between 3% and 5%,
+# ranked by closeness to 4%, then selected by highest quote volume from the pool.
 active_targets:
   - 4.0
-  - 8.0
+  - 4.0
 active_candidate_pool_size: 10
+active2_tradfi_min_abs_change_pct: 3.0
+active2_tradfi_max_abs_change_pct: 5.0
 
 # Binance public API stability knobs for active screening.
 screener_quote: USDT

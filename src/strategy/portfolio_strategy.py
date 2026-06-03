@@ -30,9 +30,11 @@ from src.binance.trade_position import (
 )
 from src.infra.env_loader import get_binance_credentials
 from src.infra.logger import format_log_details, get_logger
-from src.strategy.active_screener import screen_active_symbol
+from src.strategy.active_screener import NoActiveCandidateError, screen_active_symbol, screen_active_tradfi_symbol
 from src.strategy.runtime_config import (
     DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE,
+    DEFAULT_ACTIVE2_TRADFI_MAX_ABS_CHANGE_PCT,
+    DEFAULT_ACTIVE2_TRADFI_MIN_ABS_CHANGE_PCT,
     DEFAULT_ACTIVE_TARGETS,
     DEFAULT_AI_PROMPT_CANDLE_COUNT,
     DEFAULT_AI_PROMPT_TIMEFRAME,
@@ -81,6 +83,7 @@ class PortfolioSlot:
     target_margin_ratio: float
     symbol: Optional[str] = None
     active_target_abs_change_pct: Optional[float] = None
+    active_screening_mode: str = "standard"
 
 
 def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
@@ -185,6 +188,20 @@ def _load_strategy_config() -> Dict[str, Any]:
     raw = load_runtime_config(CONFIG_PATH)
     passive_symbols = _normalize_passive_symbols(raw.get("passive_symbols"))
     active_targets = _normalize_active_targets(raw.get("active_targets"))
+    active2_tradfi_min_abs_change_pct = _normalize_positive_float(
+        raw.get("active2_tradfi_min_abs_change_pct", DEFAULT_ACTIVE2_TRADFI_MIN_ABS_CHANGE_PCT),
+        DEFAULT_ACTIVE2_TRADFI_MIN_ABS_CHANGE_PCT,
+    )
+    active2_tradfi_max_abs_change_pct = _normalize_positive_float(
+        raw.get("active2_tradfi_max_abs_change_pct", DEFAULT_ACTIVE2_TRADFI_MAX_ABS_CHANGE_PCT),
+        DEFAULT_ACTIVE2_TRADFI_MAX_ABS_CHANGE_PCT,
+    )
+    if active2_tradfi_min_abs_change_pct > active2_tradfi_max_abs_change_pct:
+        logger.warning("active2 TradFi abs-change bounds were reversed; swapping min/max values")
+        active2_tradfi_min_abs_change_pct, active2_tradfi_max_abs_change_pct = (
+            active2_tradfi_max_abs_change_pct,
+            active2_tradfi_min_abs_change_pct,
+        )
     return {
         "cycle_interval_seconds": _normalize_positive_int(raw.get("cycle_interval_seconds", 60), 60),
         "trigger_pct_usdt": _normalize_trigger_percent(
@@ -229,6 +246,8 @@ def _load_strategy_config() -> Dict[str, Any]:
             raw.get("active_candidate_pool_size", DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE),
             DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE,
         ),
+        "active2_tradfi_min_abs_change_pct": active2_tradfi_min_abs_change_pct,
+        "active2_tradfi_max_abs_change_pct": active2_tradfi_max_abs_change_pct,
         "screener_quote": str(raw.get("screener_quote") or "USDT").strip().upper() or "USDT",
         "screener_timeout": _normalize_positive_float(raw.get("screener_timeout", 30.0), 30.0),
         "screener_retries": max(0, _safe_int(raw.get("screener_retries", 3), 3)),
@@ -258,6 +277,7 @@ def _build_portfolio_slots(config: Dict[str, Any]) -> list[PortfolioSlot]:
                 kind="active",
                 target_margin_ratio=0.25,
                 active_target_abs_change_pct=float(active_targets[0]),
+                active_screening_mode="standard",
             ),
             PortfolioSlot(
                 slot_id="active_2",
@@ -265,6 +285,7 @@ def _build_portfolio_slots(config: Dict[str, Any]) -> list[PortfolioSlot]:
                 kind="active",
                 target_margin_ratio=0.25,
                 active_target_abs_change_pct=float(active_targets[1]),
+                active_screening_mode="tradfi",
             ),
         ]
     )
@@ -993,19 +1014,32 @@ def _screen_active_candidate(
     config: Dict[str, Any],
     excluded_symbols: Sequence[str],
 ) -> Dict[str, Any]:
-    screener_output = screen_active_symbol(
-        target_abs_change_pct=float(slot.active_target_abs_change_pct or 0.0),
-        excluded_symbols=excluded_symbols,
-        quote=str(config["screener_quote"]),
-        candidate_pool_size=int(config["active_candidate_pool_size"]),
-        timeout=float(config["screener_timeout"]),
-        retries=int(config["screener_retries"]),
-        request_sleep=float(config["screener_request_sleep"]),
-    )
+    if str(slot.active_screening_mode or "").strip().lower() == "tradfi":
+        screener_output = screen_active_tradfi_symbol(
+            target_abs_change_pct=float(slot.active_target_abs_change_pct or 4.0),
+            excluded_symbols=excluded_symbols,
+            min_abs_change_pct=float(config["active2_tradfi_min_abs_change_pct"]),
+            max_abs_change_pct=float(config["active2_tradfi_max_abs_change_pct"]),
+            quote=str(config["screener_quote"]),
+            candidate_pool_size=int(config["active_candidate_pool_size"]),
+            timeout=float(config["screener_timeout"]),
+            retries=int(config["screener_retries"]),
+            request_sleep=float(config["screener_request_sleep"]),
+        )
+    else:
+        screener_output = screen_active_symbol(
+            target_abs_change_pct=float(slot.active_target_abs_change_pct or 0.0),
+            excluded_symbols=excluded_symbols,
+            quote=str(config["screener_quote"]),
+            candidate_pool_size=int(config["active_candidate_pool_size"]),
+            timeout=float(config["screener_timeout"]),
+            retries=int(config["screener_retries"]),
+            request_sleep=float(config["screener_request_sleep"]),
+        )
     selection = screener_output.get("selection") if isinstance(screener_output, dict) else {}
     selected_symbol = _normalize_symbol((selection or {}).get("symbol"))
     if not selected_symbol:
-        raise RuntimeError("active screener did not return a tradable candidate")
+        raise NoActiveCandidateError("active screener did not return a tradable candidate")
     return {
         "symbol": selected_symbol,
         "selection": selection,
@@ -1483,6 +1517,11 @@ def _run_active_slot(
                 old_symbol=current_symbol,
             ),
         )
+    except NoActiveCandidateError as exc:
+        result["success"] = True
+        result["action"] = "waiting_for_active_candidate"
+        result["error"] = str(exc)
+        return result, slot_state, None
     except Exception as exc:
         result["action"] = "screener_selection_failed"
         result["error"] = str(exc)

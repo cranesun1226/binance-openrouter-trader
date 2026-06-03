@@ -1,6 +1,10 @@
 import unittest
 
-from src.strategy.active_screener import build_usdt_perpetual_universe, select_active_symbol_from_tickers
+from src.strategy.active_screener import (
+    build_usdt_perpetual_universe,
+    build_usdt_tradfi_perpetual_universe,
+    select_active_symbol_from_tickers,
+)
 
 
 class ActiveScreenerTests(unittest.TestCase):
@@ -59,6 +63,105 @@ class ActiveScreenerTests(unittest.TestCase):
         }
 
         self.assertEqual(build_usdt_perpetual_universe(exchange_info), {"BTCUSDT"})
+
+    def test_tradfi_universe_uses_tradfi_contract_metadata(self):
+        exchange_info = {
+            "symbols": [
+                {
+                    "symbol": "XAUUSDT",
+                    "contractType": "TRADIFI_PERPETUAL",
+                    "status": "TRADING",
+                    "quoteAsset": "USDT",
+                    "underlyingSubType": ["TradFi"],
+                },
+                {
+                    "symbol": "QQQUSDT",
+                    "contractType": "TRADIFI_PERPETUAL",
+                    "status": "TRADING",
+                    "quoteAsset": "USDT",
+                    "underlyingSubType": ["TradFi"],
+                },
+                {
+                    "symbol": "BTCUSDT",
+                    "contractType": "PERPETUAL",
+                    "status": "TRADING",
+                    "quoteAsset": "USDT",
+                    "underlyingSubType": ["PoW"],
+                },
+                {
+                    "symbol": "OLDTRADFIUSDT",
+                    "contractType": "TRADIFI_PERPETUAL",
+                    "status": "BREAK",
+                    "quoteAsset": "USDT",
+                    "underlyingSubType": ["TradFi"],
+                },
+            ]
+        }
+
+        self.assertEqual(build_usdt_tradfi_perpetual_universe(exchange_info), {"QQQUSDT", "XAUUSDT"})
+
+    def test_tradfi_band_limits_pool_to_eligible_count_when_less_than_ten(self):
+        tickers = [
+            {
+                "symbol": f"TRADFI{idx}USDT",
+                "priceChangePercent": str(3.1 + (idx * 0.2)),
+                "lastPrice": "10",
+                "quoteVolume": str(1000 + idx),
+            }
+            for idx in range(7)
+        ]
+        tickers[5]["quoteVolume"] = "999999"
+        tickers.append(
+            {
+                "symbol": "OUTSIDEUSDT",
+                "priceChangePercent": "5.8",
+                "lastPrice": "10",
+                "quoteVolume": "999999999",
+            }
+        )
+        universe = {row["symbol"] for row in tickers}
+
+        selection = select_active_symbol_from_tickers(
+            tickers,
+            universe=universe,
+            target_abs_change_pct=4.0,
+            excluded_symbols=[],
+            candidate_pool_size=10,
+            min_abs_change_pct=3.0,
+            max_abs_change_pct=5.0,
+        )
+
+        self.assertEqual(len(selection["top_candidates"]), 7)
+        self.assertEqual(selection["symbol"], "TRADFI5USDT")
+        self.assertNotIn("OUTSIDEUSDT", [row["symbol"] for row in selection["top_candidates"]])
+
+    def test_tradfi_band_limits_pool_to_ten_when_more_than_ten(self):
+        tickers = [
+            {
+                "symbol": f"TRADFI{idx}USDT",
+                "priceChangePercent": str(4.0 + (idx * 0.01)),
+                "lastPrice": "10",
+                "quoteVolume": str(1000 + idx),
+            }
+            for idx in range(12)
+        ]
+        tickers[9]["quoteVolume"] = "999999"
+        tickers[10]["quoteVolume"] = "999999999"
+        universe = {row["symbol"] for row in tickers}
+
+        selection = select_active_symbol_from_tickers(
+            tickers,
+            universe=universe,
+            target_abs_change_pct=4.0,
+            excluded_symbols=[],
+            candidate_pool_size=10,
+            min_abs_change_pct=3.0,
+            max_abs_change_pct=5.0,
+        )
+
+        self.assertEqual(len(selection["top_candidates"]), 10)
+        self.assertEqual(selection["symbol"], "TRADFI9USDT")
+        self.assertNotIn("TRADFI10USDT", [row["symbol"] for row in selection["top_candidates"]])
 
 
 if __name__ == "__main__":

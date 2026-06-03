@@ -21,8 +21,10 @@ def _config():
         "openrouter_max_tokens": 8192,
         "openrouter_timeout_seconds": 300.0,
         "passive_symbols": ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"],
-        "active_targets": [4.0, 8.0],
+        "active_targets": [4.0, 4.0],
         "active_candidate_pool_size": 10,
+        "active2_tradfi_min_abs_change_pct": 3.0,
+        "active2_tradfi_max_abs_change_pct": 5.0,
         "screener_quote": "USDT",
         "screener_timeout": 30.0,
         "screener_retries": 3,
@@ -37,6 +39,17 @@ def _active_slot():
         kind="active",
         target_margin_ratio=0.25,
         active_target_abs_change_pct=4.0,
+    )
+
+
+def _active2_slot():
+    return portfolio_strategy.PortfolioSlot(
+        slot_id="active_2",
+        label="active2",
+        kind="active",
+        target_margin_ratio=0.25,
+        active_target_abs_change_pct=4.0,
+        active_screening_mode="tradfi",
     )
 
 
@@ -63,6 +76,27 @@ def _long_position(symbol="ETHUSDT"):
 
 
 class PortfolioFlowTests(unittest.TestCase):
+    def test_active2_candidate_screening_uses_tradfi_screener(self):
+        with patch(
+            "src.strategy.portfolio_strategy.screen_active_tradfi_symbol",
+            return_value={
+                "metadata": {"screening_mode": "tradfi"},
+                "selection": {"symbol": "ESUSDT", "selected": {"symbol": "ESUSDT"}},
+            },
+        ) as mocked_tradfi, patch("src.strategy.portfolio_strategy.screen_active_symbol") as mocked_standard:
+            candidate = portfolio_strategy._screen_active_candidate(
+                slot=_active2_slot(),
+                config=_config(),
+                excluded_symbols=["CLUSDT"],
+            )
+
+        self.assertEqual(candidate["symbol"], "ESUSDT")
+        mocked_tradfi.assert_called_once()
+        mocked_standard.assert_not_called()
+        self.assertEqual(mocked_tradfi.call_args.kwargs["target_abs_change_pct"], 4.0)
+        self.assertEqual(mocked_tradfi.call_args.kwargs["min_abs_change_pct"], 3.0)
+        self.assertEqual(mocked_tradfi.call_args.kwargs["max_abs_change_pct"], 5.0)
+
     def test_non_ai_cycle_does_not_create_db_artifact(self):
         slot = _passive_slot()
         slot_state = {"slot_id": "passive_cl", "kind": "passive", "symbol": "CLUSDT"}

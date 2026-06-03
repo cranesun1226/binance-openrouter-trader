@@ -7,7 +7,7 @@ class PortfolioHelperTests(unittest.TestCase):
     def test_default_config_builds_six_slots_in_priority_order(self):
         config = {
             "passive_symbols": ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"],
-            "active_targets": [4.0, 8.0],
+            "active_targets": [4.0, 4.0],
         }
 
         slots = portfolio_strategy._build_portfolio_slots(config)
@@ -22,6 +22,8 @@ class PortfolioHelperTests(unittest.TestCase):
         ])
         self.assertEqual([slot.symbol for slot in slots[:4]], ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"])
         self.assertEqual([slot.target_margin_ratio for slot in slots], [0.125, 0.125, 0.125, 0.125, 0.25, 0.25])
+        self.assertEqual(slots[4].active_screening_mode, "standard")
+        self.assertEqual(slots[5].active_screening_mode, "tradfi")
 
     def test_target_notional_uses_capital_usage_ratio_and_leverage(self):
         slot = portfolio_strategy.PortfolioSlot(
@@ -93,7 +95,7 @@ class PortfolioHelperTests(unittest.TestCase):
     def test_duplicate_active_state_symbol_is_cleared_for_later_slot(self):
         config = {
             "passive_symbols": ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"],
-            "active_targets": [4.0, 8.0],
+            "active_targets": [4.0, 4.0],
         }
         slots = portfolio_strategy._build_portfolio_slots(config)
         state = portfolio_strategy._normalize_portfolio_state(

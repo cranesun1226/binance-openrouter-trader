@@ -16,8 +16,8 @@ This project runs a 1x-leverage portfolio loop across four fixed passive markets
   - 응답은 `LONG` 또는 `SHORT`만 허용
 - 6개 슬롯 포트폴리오
   - Passive: `CLUSDT`, `XAUUSDT`, `QQQUSDT`, `BTCUSDT`
-  - Active 1: 24시간 변동률 절대값이 4%에 가까운 USDT-M perpetual 후보 10개 중 거래대금 최대 심볼
-  - Active 2: 24시간 변동률 절대값이 8%에 가까운 USDT-M perpetual 후보 10개 중 거래대금 최대 심볼
+  - Active 1: 24시간 변동률 절대값이 4%에 가까운 crypto USDT-M perpetual 후보 10개 중 거래대금 최대 심볼
+  - Active 2: TradFi USDT-M perpetual 중 24시간 변동률 절대값이 3~5%인 후보를 4% 근접순으로 최대 10개 추린 뒤 거래대금 최대 심볼
 - 자산 배분
   - Passive 각 12.5%
   - Active 각 25%
@@ -100,7 +100,9 @@ passive_symbols:
   - BTCUSDT
 active_targets:
   - 4.0
-  - 8.0
+  - 4.0
+active2_tradfi_min_abs_change_pct: 3.0
+active2_tradfi_max_abs_change_pct: 5.0
 ```
 
 ### Dry Run
@@ -180,7 +182,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 │   │   ├── price_chart.py
 │   │   └── telegram.py
 │   └── strategy/
-│       ├── active_screener.py      # 4%/8% active market screening
+│       ├── active_screener.py      # crypto and TradFi active market screening
 │       ├── portfolio_strategy.py   # Six-slot portfolio state machine
 │       ├── runtime_config.py
 │       └── scheduler.py
@@ -204,8 +206,8 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
   - The bot accepts only `LONG` or `SHORT`
 - Six-slot portfolio
   - Passive: `CLUSDT`, `XAUUSDT`, `QQQUSDT`, `BTCUSDT`
-  - Active 1: top-volume symbol among the 10 USDT-M perpetual candidates closest to a 4% absolute 24h move
-  - Active 2: top-volume symbol among the 10 USDT-M perpetual candidates closest to an 8% absolute 24h move
+- Active 1: top-volume crypto USDT-M perpetual among the 10 candidates closest to a 4% absolute 24h move
+- Active 2: top-volume TradFi USDT-M perpetual after filtering to 3-5% absolute 24h move, ranking by closeness to 4%, and capping the pool at 10
 - Allocation
   - 12.5% per passive slot
   - 25% per active slot
@@ -288,7 +290,9 @@ passive_symbols:
   - BTCUSDT
 active_targets:
   - 4.0
-  - 8.0
+  - 4.0
+active2_tradfi_min_abs_change_pct: 3.0
+active2_tradfi_max_abs_change_pct: 5.0
 ```
 
 ### Dry Run
@@ -368,7 +372,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 │   │   ├── price_chart.py
 │   │   └── telegram.py
 │   └── strategy/
-│       ├── active_screener.py      # 4%/8% active market screening
+│       ├── active_screener.py      # crypto and TradFi active market screening
 │       ├── portfolio_strategy.py   # Six-slot portfolio state machine
 │       ├── runtime_config.py
 │       └── scheduler.py
