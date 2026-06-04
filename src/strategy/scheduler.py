@@ -367,7 +367,6 @@ class TradingScheduler:
             summary_lines=[
                 self._format_html_line("Action", self._translate_action(payload.get("action"))),
                 self._format_html_line("AI Triggered", str(bool(payload.get("ai_triggered")))),
-                self._format_html_line("Cycle Dir", payload.get("cycle_dir"), code=True),
             ],
             sections=[(self._format_html_title("Slots"), slot_lines, True)],
         )
