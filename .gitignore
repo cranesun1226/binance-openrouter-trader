@@ -19,3 +19,6 @@ venv/
 log/
 db/
 scheduler_state.json
+
+# Local operation runbook
+operation.md
