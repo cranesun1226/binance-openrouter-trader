@@ -6,12 +6,29 @@
 # Python 관련 폴더들 (Python Related Folders)
 # ================================================================================
 __pycache__/
+*.pyc
 venv/
+.DS_Store
 
 # ================================================================================
 # .env management (Binance, OpenRouter, Telegram)
 # ================================================================================
 .env
+.env.*
+!.env.example
+
+# ================================================================================
+# Local credentials and SSH material
+# ================================================================================
+*.pem
+*.key
+*.p8
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+known_hosts
+auth.json
 
 # ================================================================================
 # Runtime artifacts
@@ -19,6 +36,13 @@ venv/
 log/
 db/
 scheduler_state.json
+scheduler_state*.json
+*.log
 
-# Local operation runbook
+# ================================================================================
+# Local-only deployment and operation files
+# ================================================================================
+docs/
 operation.md
+binance-openrouter-trader.service
+setup_lightsail_systemd.sh

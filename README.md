@@ -48,14 +48,12 @@ This project runs a 1x-leverage portfolio loop across four fixed passive markets
 
 ### LLM 프롬프트
 
-정확한 OpenRouter 요청 구조와 프롬프트 템플릿은 [docs/llm-prompt.md](./docs/llm-prompt.md)에 문서화되어 있습니다.
-
-요약하면, LLM에는 한 번에 한 종목의 `symbol`, 현재 `reference_price`, 그리고 1시간봉 종가 100개만 전달됩니다. 최신 종가는 판단 시점의 실시간 기준가로 보정되며, 응답은 strict JSON schema로 `{"decision":"LONG"}` 또는 `{"decision":"SHORT"}`만 허용합니다.
+LLM에는 한 번에 한 종목의 `symbol`, 현재 `reference_price`, 그리고 1시간봉 종가 100개만 전달됩니다. 최신 종가는 판단 시점의 실시간 기준가로 보정되며, 응답은 strict JSON schema로 `{"decision":"LONG"}` 또는 `{"decision":"SHORT"}`만 허용합니다.
 
 ### 설치
 
 ```bash
-git clone https://github.com/cranesun1226/binance-openrouter-trader.git
+git clone <repository-url>
 cd binance-openrouter-trader
 
 python -m venv venv
@@ -89,11 +87,6 @@ openrouter_model: deepseek/deepseek-v4-flash
 openrouter_reasoning_effort: high
 openrouter_max_tokens: 8192
 openrouter_timeout_seconds: 300.0
-openrouter_provider:
-  order:
-    - digitalocean
-  allow_fallbacks: true
-  require_parameters: false
 fixed_leverage: 1
 capital_usage_ratio: 0.99
 rebalance_threshold_pct: 0.03
@@ -106,10 +99,13 @@ passive_symbols:
 active_targets:
   - 4.0
   - 4.0
-active1_min_abs_change_pct: 3.0
-active1_max_abs_change_pct: 5.0
+active_candidate_pool_size: 10
 active2_tradfi_min_abs_change_pct: 3.0
 active2_tradfi_max_abs_change_pct: 5.0
+screener_quote: USDT
+screener_timeout: 30.0
+screener_retries: 3
+screener_request_sleep: 0.10
 ```
 
 ### Dry Run
@@ -147,10 +143,23 @@ python main.py --once
 python main.py
 ```
 
-Linode/Ubuntu systemd 설치:
+Ubuntu systemd로 운영할 때는 호스트별 service 파일과 배포 스크립트를 로컬 전용으로 관리하세요. Public repo에는 서버 IP, SSH alias, private key 경로, 실제 원격 경로를 커밋하지 않습니다.
+
+메모리가 작은 인스턴스에서는 swap을 먼저 붙이는 것을 권장합니다.
 
 ```bash
-sudo bash setup_linode_systemd.sh --no-start
+sudo fallocate -l 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+호스트 로컬 service 파일을 만든 뒤 시작합니다.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable binance-openrouter-trader
 sudo systemctl start binance-openrouter-trader
 sudo systemctl status binance-openrouter-trader
 ```
@@ -199,6 +208,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 ### 공개 저장소 주의사항
 
 - `.env`, `log/`, `db/`, `scheduler_state.json`은 `.gitignore`에 포함되어 있습니다.
+- 호스트별 운영 문서, service 파일, SSH 설정, 배포 스크립트는 public repo에 커밋하지 않습니다.
 - API key, Telegram token, 실제 계좌 정보, live cycle output은 절대 커밋하지 마세요.
 - `db/`에는 LLM 판단이 발생한 사이클과 중요한 포지션 이벤트의 입출력/차트 산출물이 저장됩니다. 일반 1분 점검 사이클은 저장하지 않으며, 최대 20개 cycle 디렉터리만 유지합니다.
 - `log/ai_trader.log`는 10MB 단위로 회전하며 최대 5개 백업 파일을 유지합니다.
@@ -245,14 +255,12 @@ The project has passed a full live-data dry run for all six slots, including Ope
 
 ### LLM Prompt
 
-The exact OpenRouter request body and prompt template are documented in [docs/llm-prompt.md](./docs/llm-prompt.md).
-
-In short, the LLM receives only one symbol at a time: `symbol`, live `reference_price`, and 100 recent 1h close prices. The newest close is aligned to the live reference price at decision time, and the response is constrained by a strict JSON schema to `{"decision":"LONG"}` or `{"decision":"SHORT"}`.
+The LLM receives only one symbol at a time: `symbol`, live `reference_price`, and 100 recent 1h close prices. The newest close is aligned to the live reference price at decision time, and the response is constrained by a strict JSON schema to `{"decision":"LONG"}` or `{"decision":"SHORT"}`.
 
 ### Installation
 
 ```bash
-git clone https://github.com/cranesun1226/binance-openrouter-trader.git
+git clone <repository-url>
 cd binance-openrouter-trader
 
 python -m venv venv
@@ -286,11 +294,6 @@ openrouter_model: deepseek/deepseek-v4-flash
 openrouter_reasoning_effort: high
 openrouter_max_tokens: 8192
 openrouter_timeout_seconds: 300.0
-openrouter_provider:
-  order:
-    - digitalocean
-  allow_fallbacks: true
-  require_parameters: false
 fixed_leverage: 1
 capital_usage_ratio: 0.99
 rebalance_threshold_pct: 0.03
@@ -303,10 +306,13 @@ passive_symbols:
 active_targets:
   - 4.0
   - 4.0
-active1_min_abs_change_pct: 3.0
-active1_max_abs_change_pct: 5.0
+active_candidate_pool_size: 10
 active2_tradfi_min_abs_change_pct: 3.0
 active2_tradfi_max_abs_change_pct: 5.0
+screener_quote: USDT
+screener_timeout: 30.0
+screener_retries: 3
+screener_request_sleep: 0.10
 ```
 
 ### Dry Run
@@ -344,10 +350,23 @@ Run the scheduler:
 python main.py
 ```
 
-Install as a systemd service on Linode/Ubuntu:
+For Ubuntu systemd operation, keep host-specific service files and deployment scripts local-only. Do not commit server IPs, SSH aliases, private key paths, or real remote paths to the public repository.
+
+On small-memory instances, add swap before running the bot.
 
 ```bash
-sudo bash setup_linode_systemd.sh --no-start
+sudo fallocate -l 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Create a host-local service file, then start it.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable binance-openrouter-trader
 sudo systemctl start binance-openrouter-trader
 sudo systemctl status binance-openrouter-trader
 ```
@@ -396,6 +415,7 @@ python -m py_compile main.py src/ai/openrouter_trader.py src/strategy/portfolio_
 ### Open Source Safety
 
 - `.env`, `log/`, `db/`, and `scheduler_state.json` are ignored by Git.
+- Host-specific operation docs, service files, SSH configuration, and deployment scripts are kept out of the public repository.
 - Never commit API keys, Telegram tokens, account data, or live cycle outputs.
 - `db/` stores LLM-triggered cycle artifacts and important position-event records only. Routine one-minute mechanical checks are not written to `db/`, and only the latest 20 cycle directories are retained.
 - `log/ai_trader.log` rotates at 10MB and keeps up to 5 backup files.
