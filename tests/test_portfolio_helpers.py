@@ -129,6 +129,76 @@ class PortfolioHelperTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["action"], "invalid_ai_decision")
 
+    def test_rebalance_keeps_position_when_tiny_increase_is_below_min_qty(self):
+        with patch(
+            "src.strategy.portfolio_strategy._sync_fixed_stop_loss",
+            return_value={"success": True, "changed": False},
+        ), patch(
+            "src.strategy.portfolio_strategy._place_direction_position",
+            return_value={
+                "success": False,
+                "action": "target_qty_below_min",
+                "order_plan": {"qty": None, "meets_min_notional": True},
+            },
+        ) as mocked_place:
+            result = portfolio_strategy._rebalance_existing_position(
+                api_key="key",
+                api_secret="secret",
+                symbol="BTCUSDT",
+                position={
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "-0.004",
+                    "side": "Sell",
+                    "entryPrice": "65000",
+                    "markPrice": "65000",
+                    "positionValue": "260",
+                },
+                decision="SHORT",
+                target_notional_usdt=307.0,
+                reference_price=65000.0,
+                leverage=1,
+                available_notional_cap=47.0,
+                rebalance_threshold_pct=0.03,
+                stop_loss_pct=0.04,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["action"], "kept_position_size")
+        self.assertEqual(result["skipped_rebalance_reason"], "target_qty_below_min")
+        self.assertEqual(result["rebalance_order_plan"], {"qty": None, "meets_min_notional": True})
+        mocked_place.assert_called_once()
+
+    def test_rebalance_keeps_position_when_no_available_cap_for_increase(self):
+        with patch(
+            "src.strategy.portfolio_strategy._sync_fixed_stop_loss",
+            return_value={"success": True, "changed": False},
+        ), patch("src.strategy.portfolio_strategy._place_direction_position") as mocked_place:
+            result = portfolio_strategy._rebalance_existing_position(
+                api_key="key",
+                api_secret="secret",
+                symbol="BTCUSDT",
+                position={
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "-0.004",
+                    "side": "Sell",
+                    "entryPrice": "65000",
+                    "markPrice": "65000",
+                    "positionValue": "260",
+                },
+                decision="SHORT",
+                target_notional_usdt=307.0,
+                reference_price=65000.0,
+                leverage=1,
+                available_notional_cap=0.0,
+                rebalance_threshold_pct=0.03,
+                stop_loss_pct=0.04,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["action"], "kept_position_size")
+        self.assertEqual(result["skipped_rebalance_reason"], "insufficient_available_balance")
+        mocked_place.assert_not_called()
+
     def test_reverse_existing_position_closes_then_opens_opposite_immediately(self):
         with patch(
             "src.strategy.portfolio_strategy._close_existing_position",

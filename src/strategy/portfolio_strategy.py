@@ -1114,6 +1114,17 @@ def _rebalance_existing_position(
         }
     if diff > 0.0:
         increase_notional = min(diff, max(0.0, float(available_notional_cap)))
+        if increase_notional <= 0.0:
+            return {
+                "success": True,
+                "action": "kept_position_size",
+                "current_notional_usdt": current_notional,
+                "target_notional_usdt": target_notional,
+                "rebalance_diff_usdt": diff,
+                "requested_rebalance_notional_usdt": increase_notional,
+                "skipped_rebalance_reason": "insufficient_available_balance",
+                "stop_sync": stop_sync,
+            }
         entry_result = _place_direction_position(
             api_key=api_key,
             api_secret=api_secret,
@@ -1124,6 +1135,19 @@ def _rebalance_existing_position(
             leverage=leverage,
             available_notional_cap=increase_notional,
         )
+        entry_action = str(entry_result.get("action") or "")
+        if entry_action in {"target_qty_below_min", "skipped_entry_below_min_notional"}:
+            return {
+                "success": True,
+                "action": "kept_position_size",
+                "current_notional_usdt": current_notional,
+                "target_notional_usdt": target_notional,
+                "rebalance_diff_usdt": diff,
+                "requested_rebalance_notional_usdt": increase_notional,
+                "skipped_rebalance_reason": entry_action,
+                "rebalance_order_plan": entry_result.get("order_plan"),
+                "stop_sync": stop_sync,
+            }
         if not bool(entry_result.get("success")):
             return entry_result
         synced = _sync_position_after_trade(
