@@ -20,7 +20,9 @@ openrouter_timeout_seconds: 300.0
 openrouter_provider:
   order:
     - digitalocean
-  allow_fallbacks: true
+  only:
+    - digitalocean
+  allow_fallbacks: false
   require_parameters: false
 
 # Portfolio allocation

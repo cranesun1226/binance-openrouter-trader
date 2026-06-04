@@ -20,7 +20,12 @@ def _config():
         "openrouter_reasoning_effort": "high",
         "openrouter_max_tokens": 8192,
         "openrouter_timeout_seconds": 300.0,
-        "openrouter_provider": {"order": ["digitalocean"], "allow_fallbacks": True, "require_parameters": False},
+        "openrouter_provider": {
+            "order": ["digitalocean"],
+            "only": ["digitalocean"],
+            "allow_fallbacks": False,
+            "require_parameters": False,
+        },
         "passive_symbols": ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"],
         "active_targets": [4.0, 4.0],
         "active_candidate_pool_size": 10,

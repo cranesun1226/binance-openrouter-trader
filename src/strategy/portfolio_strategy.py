@@ -361,13 +361,14 @@ def _decision_to_order_side(value: Any) -> Optional[str]:
 def _normalize_openrouter_provider(value: Any) -> Dict[str, Any]:
     raw = value if isinstance(value, dict) else DEFAULT_OPENROUTER_PROVIDER
     provider: Dict[str, Any] = {}
-    order = raw.get("order")
-    if isinstance(order, str):
-        order = [order]
-    if isinstance(order, (list, tuple, set)):
-        normalized_order = [str(item or "").strip().lower() for item in order if str(item or "").strip()]
-        if normalized_order:
-            provider["order"] = normalized_order
+    for key in ("order", "only"):
+        values = raw.get(key)
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, (list, tuple, set)):
+            normalized_values = [str(item or "").strip().lower() for item in values if str(item or "").strip()]
+            if normalized_values:
+                provider[key] = normalized_values
     if "allow_fallbacks" in raw:
         provider["allow_fallbacks"] = bool(raw.get("allow_fallbacks"))
     if "require_parameters" in raw:
@@ -375,6 +376,7 @@ def _normalize_openrouter_provider(value: Any) -> Dict[str, Any]:
     if not provider:
         return dict(DEFAULT_OPENROUTER_PROVIDER)
     provider.setdefault("order", list(DEFAULT_OPENROUTER_PROVIDER["order"]))
+    provider.setdefault("only", list(DEFAULT_OPENROUTER_PROVIDER["only"]))
     provider.setdefault("allow_fallbacks", bool(DEFAULT_OPENROUTER_PROVIDER["allow_fallbacks"]))
     provider.setdefault("require_parameters", bool(DEFAULT_OPENROUTER_PROVIDER["require_parameters"]))
     return provider
