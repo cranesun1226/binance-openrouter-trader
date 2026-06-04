@@ -64,6 +64,7 @@ class PortfolioHelperTests(unittest.TestCase):
     def test_trigger_is_per_slot_last_llm_anchor(self):
         slot_state = {
             "last_ai_trigger_price": 100.0,
+            "last_ai_decision": "LONG",
             "next_trigger_down": 99.0,
             "next_trigger_up": 101.0,
         }
@@ -84,6 +85,48 @@ class PortfolioHelperTests(unittest.TestCase):
         self.assertFalse(waiting["should_trigger"])
         self.assertTrue(triggered["should_trigger"])
         self.assertEqual(triggered["reason"], "price_distance_reached")
+
+    def test_missing_ai_decision_for_existing_position_forces_llm_trigger(self):
+        slot_state = {
+            "last_ai_trigger_price": 100.0,
+            "last_ai_decision": None,
+            "next_trigger_down": 99.0,
+            "next_trigger_up": 101.0,
+        }
+
+        triggered = portfolio_strategy._determine_ai_trigger(
+            has_position=True,
+            current_price=100.5,
+            slot_state=slot_state,
+            trigger_pct_usdt=1.0,
+        )
+
+        self.assertTrue(triggered["should_trigger"])
+        self.assertEqual(triggered["reason"], "missing_ai_decision")
+
+    def test_rebalance_rejects_invalid_decision_without_inferring_direction(self):
+        result = portfolio_strategy._rebalance_existing_position(
+            api_key="key",
+            api_secret="secret",
+            symbol="ETHUSDT",
+            position={
+                "symbol": "ETHUSDT",
+                "positionAmt": "2",
+                "side": "Buy",
+                "entryPrice": "100",
+                "markPrice": "100",
+            },
+            decision="",
+            target_notional_usdt=200.0,
+            reference_price=100.0,
+            leverage=1,
+            available_notional_cap=100.0,
+            rebalance_threshold_pct=0.03,
+            stop_loss_pct=0.04,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["action"], "invalid_ai_decision")
 
     def test_trigger_levels_keep_precision_for_low_priced_symbols(self):
         levels = portfolio_strategy._build_trigger_levels(0.093455, 1.0)

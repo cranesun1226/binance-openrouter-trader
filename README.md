@@ -89,6 +89,11 @@ openrouter_model: deepseek/deepseek-v4-flash
 openrouter_reasoning_effort: high
 openrouter_max_tokens: 8192
 openrouter_timeout_seconds: 300.0
+openrouter_provider:
+  order:
+    - digitalocean
+  allow_fallbacks: true
+  require_parameters: false
 fixed_leverage: 1
 capital_usage_ratio: 0.99
 rebalance_threshold_pct: 0.03
@@ -101,6 +106,8 @@ passive_symbols:
 active_targets:
   - 4.0
   - 4.0
+active1_min_abs_change_pct: 3.0
+active1_max_abs_change_pct: 5.0
 active2_tradfi_min_abs_change_pct: 3.0
 active2_tradfi_max_abs_change_pct: 5.0
 ```
@@ -279,6 +286,11 @@ openrouter_model: deepseek/deepseek-v4-flash
 openrouter_reasoning_effort: high
 openrouter_max_tokens: 8192
 openrouter_timeout_seconds: 300.0
+openrouter_provider:
+  order:
+    - digitalocean
+  allow_fallbacks: true
+  require_parameters: false
 fixed_leverage: 1
 capital_usage_ratio: 0.99
 rebalance_threshold_pct: 0.03
@@ -291,6 +303,8 @@ passive_symbols:
 active_targets:
   - 4.0
   - 4.0
+active1_min_abs_change_pct: 3.0
+active1_max_abs_change_pct: 5.0
 active2_tradfi_min_abs_change_pct: 3.0
 active2_tradfi_max_abs_change_pct: 5.0
 ```

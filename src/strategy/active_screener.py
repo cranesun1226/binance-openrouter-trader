@@ -216,6 +216,8 @@ def screen_active_symbol(
     excluded_symbols: Sequence[str],
     quote: str = "USDT",
     candidate_pool_size: int = 10,
+    min_abs_change_pct: Optional[float] = None,
+    max_abs_change_pct: Optional[float] = None,
     timeout: float = 30.0,
     retries: int = 3,
     request_sleep: float = 0.10,
@@ -230,6 +232,8 @@ def screen_active_symbol(
         format_log_details(
             {
                 "target_abs_change_pct": target_abs_change_pct,
+                "min_abs_change_pct": min_abs_change_pct,
+                "max_abs_change_pct": max_abs_change_pct,
                 "quote": quote,
                 "candidate_pool_size": candidate_pool_size,
                 "excluded_symbols": sorted(
@@ -247,8 +251,14 @@ def screen_active_symbol(
         target_abs_change_pct=target_abs_change_pct,
         excluded_symbols=excluded_symbols,
         candidate_pool_size=candidate_pool_size,
+        min_abs_change_pct=min_abs_change_pct,
+        max_abs_change_pct=max_abs_change_pct,
     )
     if not selection.get("symbol"):
+        if min_abs_change_pct is not None or max_abs_change_pct is not None:
+            raise NoActiveCandidateError(
+                f"active screener found no candidate with abs(24h change) between {min_abs_change_pct}% and {max_abs_change_pct}%"
+            )
         raise NoActiveCandidateError("active screener did not return a tradable candidate")
     return {
         "metadata": {
@@ -259,6 +269,8 @@ def screen_active_symbol(
             "universe_symbols": len(universe),
             "ticker_count": len(tickers),
             "candidate_pool_size": max(1, int(candidate_pool_size)),
+            "min_abs_change_pct": min_abs_change_pct,
+            "max_abs_change_pct": max_abs_change_pct,
         },
         "selection": selection,
     }

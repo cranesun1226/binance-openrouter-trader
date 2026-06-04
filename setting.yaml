@@ -17,6 +17,11 @@ openrouter_model: deepseek/deepseek-v4-flash
 openrouter_reasoning_effort: high
 openrouter_max_tokens: 8192
 openrouter_timeout_seconds: 300.0
+openrouter_provider:
+  order:
+    - digitalocean
+  allow_fallbacks: true
+  require_parameters: false
 
 # Portfolio allocation
 fixed_leverage: 1
@@ -38,6 +43,8 @@ active_targets:
   - 4.0
   - 4.0
 active_candidate_pool_size: 10
+active1_min_abs_change_pct: 3.0
+active1_max_abs_change_pct: 5.0
 active2_tradfi_min_abs_change_pct: 3.0
 active2_tradfi_max_abs_change_pct: 5.0
 

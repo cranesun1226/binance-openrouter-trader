@@ -9,6 +9,7 @@ This document describes the exact OpenRouter request shape used by Binance OpenR
 - One OpenRouter call is made for one symbol at a time.
 - The model is `deepseek/deepseek-v4-flash`.
 - The default reasoning setting is `high`; if `max` is provided, the runtime normalizes it to `xhigh`.
+- OpenRouter provider routing prioritizes `digitalocean` and allows fallback providers. `require_parameters` is disabled by default because OpenRouter currently rejects DigitalOcean-only DeepSeek V4 Flash requests when it is enabled; the runtime still parses the response with the strict local schema and fails closed on invalid output.
 - The model receives only the supplied symbol, live reference price, and close-price arrays.
 - The prompt explicitly tells the model to consider all 100 supplied close prices in balance instead of focusing only on the most recent few candles.
 - The accepted final answer is strictly one JSON object: `{"decision":"LONG"}` or `{"decision":"SHORT"}`.
@@ -32,6 +33,11 @@ This document describes the exact OpenRouter request shape used by Binance OpenR
   "reasoning": {
     "effort": "high",
     "exclude": false
+  },
+  "provider": {
+    "order": ["digitalocean"],
+    "allow_fallbacks": true,
+    "require_parameters": false
   },
   "response_format": {
     "type": "json_schema",

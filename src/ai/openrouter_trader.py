@@ -61,6 +61,11 @@ OPENROUTER_DEFAULT_TIMEOUT_SECONDS = 300.0
 OPENROUTER_CONNECT_TIMEOUT_SECONDS = 10.0
 OPENROUTER_APP_TITLE = "binance-openrouter-trader"
 _ONE_MILLION = 1_000_000
+OPENROUTER_DEFAULT_PROVIDER_PREFERENCES: dict[str, Any] = {
+    "order": ["digitalocean"],
+    "allow_fallbacks": True,
+    "require_parameters": False,
+}
 
 _OPENROUTER_MODEL_PRICING_USD_PER_MILLION: dict[str, dict[str, float]] = {
     OPENROUTER_DIRECTION_MODEL: {
@@ -213,6 +218,25 @@ def _decision_json_schema(response_model: type[DecisionT]) -> dict[str, Any]:
     }
 
 
+def _parse_strict_decision_response(raw_response: str, response_model: type[DecisionT]) -> DecisionT:
+    try:
+        payload = json.loads(raw_response)
+    except json.JSONDecodeError as exc:
+        raise ValueError("OpenRouter decision response must be a JSON object") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("OpenRouter decision response must be a JSON object")
+    if set(payload.keys()) != {"decision"}:
+        raise ValueError("OpenRouter decision response must contain only the decision field")
+
+    decision_value = payload.get("decision")
+    if decision_value not in {"LONG", "SHORT"}:
+        raise ValueError("OpenRouter decision must be exactly LONG or SHORT")
+
+    canonical_response = json.dumps({"decision": decision_value}, ensure_ascii=False, separators=(",", ":"))
+    return response_model.model_validate_json(canonical_response)
+
+
 def estimate_openrouter_cost(
     usage_metadata: Optional[dict[str, Any]],
     *,
@@ -296,6 +320,41 @@ def _normalize_timeout_seconds(value: Any) -> float:
     return parsed
 
 
+def _normalize_provider_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_values = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_values = list(value)
+    else:
+        return []
+    normalized: list[str] = []
+    for raw_value in raw_values:
+        item = str(raw_value or "").strip()
+        if item and item not in normalized:
+            normalized.append(item)
+    return normalized
+
+
+def _normalize_openrouter_provider_preferences(value: Optional[Dict[str, Any]]) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else OPENROUTER_DEFAULT_PROVIDER_PREFERENCES
+    normalized: dict[str, Any] = {}
+    for key in ("order", "only", "ignore", "quantizations"):
+        items = _normalize_provider_string_list(raw.get(key))
+        if items:
+            normalized[key] = items
+    for key in ("allow_fallbacks", "require_parameters", "zdr", "enforce_distillable_text"):
+        if key in raw:
+            normalized[key] = bool(raw.get(key))
+    data_collection = str(raw.get("data_collection") or "").strip().lower()
+    if data_collection in {"allow", "deny"}:
+        normalized["data_collection"] = data_collection
+    for key in ("sort", "preferred_min_throughput", "preferred_max_latency", "max_price"):
+        value_for_key = raw.get(key)
+        if value_for_key not in (None, "", [], {}):
+            normalized[key] = _to_jsonable(value_for_key)
+    return normalized
+
+
 def _save_direction_analysis_data(
     *,
     cycle_dir: str,
@@ -308,6 +367,7 @@ def _save_direction_analysis_data(
     reasoning: str,
     reasoning_details: list[dict[str, Any]],
     model: str,
+    provider_preferences: Optional[Dict[str, Any]],
     reasoning_effort: str,
     timeout_seconds: float,
     decision_mode: str = "direction",
@@ -323,6 +383,7 @@ def _save_direction_analysis_data(
                 json.dump(
                     {
                         "model": model,
+                        "provider_preferences": provider_preferences or {},
                         "reasoning_effort": reasoning_effort,
                         "timeout_seconds": timeout_seconds,
                         "decision_mode": normalized_mode,
@@ -337,6 +398,9 @@ def _save_direction_analysis_data(
                 json.dump(
                     {
                         "model": model,
+                        "provider_preferences": provider_preferences or {},
+                        "provider": (response_payload or {}).get("provider"),
+                        "generation_id": (response_payload or {}).get("id"),
                         "reasoning_effort": reasoning_effort,
                         "decision_mode": normalized_mode,
                         "decision": decision.model_dump(),
@@ -363,6 +427,7 @@ def _call_openrouter_structured_decision(
     reasoning_effort: str,
     response_model: type[DecisionT],
     model: str = OPENROUTER_DIRECTION_MODEL,
+    provider_preferences: Optional[Dict[str, Any]] = None,
     max_tokens: int = 8192,
     timeout_seconds: float = OPENROUTER_DEFAULT_TIMEOUT_SECONDS,
     context_label: str = "direction",
@@ -372,6 +437,7 @@ def _call_openrouter_structured_decision(
     if normalized_reasoning_effort == "max":
         normalized_reasoning_effort = OPENROUTER_MAX_REASONING_EFFORT
     normalized_timeout_seconds = _normalize_timeout_seconds(timeout_seconds)
+    normalized_provider_preferences = _normalize_openrouter_provider_preferences(provider_preferences)
 
     payload = {
         "model": str(model or OPENROUTER_DIRECTION_MODEL).strip() or OPENROUTER_DIRECTION_MODEL,
@@ -386,6 +452,8 @@ def _call_openrouter_structured_decision(
         "response_format": _decision_json_schema(response_model),
         "max_tokens": max(1, int(max_tokens)),
     }
+    if normalized_provider_preferences:
+        payload["provider"] = normalized_provider_preferences
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -403,6 +471,7 @@ def _call_openrouter_structured_decision(
                         "attempt": attempt,
                         "max_retries": OPENROUTER_GENERATE_MAX_RETRIES,
                         "model": payload["model"],
+                        "provider": payload.get("provider"),
                         "reasoning_effort": normalized_reasoning_effort,
                         "timeout_seconds": normalized_timeout_seconds,
                         "prompt_chars": len(prompt or ""),
@@ -434,7 +503,7 @@ def _call_openrouter_structured_decision(
                     f"OpenRouter returned empty final content"
                     f" (context={context_label}, finish_reason={finish_reason})"
                 )
-            decision = response_model.model_validate_json(raw_response)
+            decision = _parse_strict_decision_response(raw_response, response_model)
             usage_metadata = response_payload.get("usage") if isinstance(response_payload.get("usage"), dict) else {}
             reasoning = str(message_payload.get("reasoning") or "")
             reasoning_details = _normalize_reasoning_details(message_payload.get("reasoning_details"))
@@ -445,6 +514,7 @@ def _call_openrouter_structured_decision(
                     {
                         "context": context_label,
                         "model": payload["model"],
+                        "provider": response_payload.get("provider"),
                         "decision": getattr(decision, "decision", None),
                         "reasoning_chars": len(reasoning),
                         "reasoning_details": len(reasoning_details),
@@ -497,6 +567,7 @@ def evaluate_trade_direction(
     timeframe_ohlcv: Dict[str, Any],
     reasoning_effort: str,
     model: str = OPENROUTER_DIRECTION_MODEL,
+    provider_preferences: Optional[Dict[str, Any]] = None,
     max_tokens: int = 8192,
     timeout_seconds: float = OPENROUTER_DEFAULT_TIMEOUT_SECONDS,
     analysis_sink: Optional[Dict[str, Any]] = None,
@@ -524,6 +595,7 @@ def evaluate_trade_direction(
         reasoning_effort=reasoning_effort,
         response_model=TradeDirectionDecision,
         model=model,
+        provider_preferences=provider_preferences,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         context_label=decision_mode,
@@ -549,6 +621,7 @@ def evaluate_trade_direction(
         reasoning=call_result.reasoning,
         reasoning_details=call_result.reasoning_details,
         model=model,
+        provider_preferences=_normalize_openrouter_provider_preferences(provider_preferences),
         reasoning_effort=reasoning_effort,
         timeout_seconds=timeout_seconds,
         decision_mode=decision_mode,
@@ -558,6 +631,9 @@ def evaluate_trade_direction(
         analysis_sink.update(
             {
                 "model": model,
+                "provider_preferences": _normalize_openrouter_provider_preferences(provider_preferences),
+                "provider": call_result.response_payload.get("provider"),
+                "generation_id": call_result.response_payload.get("id"),
                 "reasoning_effort": reasoning_effort,
                 "decision_mode": decision_mode,
                 "decision": normalized_decision.model_dump(),
@@ -582,6 +658,7 @@ def evaluate_entry_direction(**kwargs: Any) -> Optional[TradeDirectionDecision]:
 __all__ = [
     "OPENROUTER_DIRECTION_MODEL",
     "OPENROUTER_DEFAULT_REASONING_EFFORT",
+    "OPENROUTER_DEFAULT_PROVIDER_PREFERENCES",
     "OPENROUTER_DEFAULT_TIMEOUT_SECONDS",
     "OPENROUTER_MAX_REASONING_EFFORT",
     "OpenRouterStructuredResponse",

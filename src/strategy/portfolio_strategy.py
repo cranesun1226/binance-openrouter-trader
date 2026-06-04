@@ -33,6 +33,8 @@ from src.infra.logger import format_log_details, get_logger
 from src.strategy.active_screener import NoActiveCandidateError, screen_active_symbol, screen_active_tradfi_symbol
 from src.strategy.runtime_config import (
     DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE,
+    DEFAULT_ACTIVE1_MAX_ABS_CHANGE_PCT,
+    DEFAULT_ACTIVE1_MIN_ABS_CHANGE_PCT,
     DEFAULT_ACTIVE2_TRADFI_MAX_ABS_CHANGE_PCT,
     DEFAULT_ACTIVE2_TRADFI_MIN_ABS_CHANGE_PCT,
     DEFAULT_ACTIVE_TARGETS,
@@ -42,6 +44,7 @@ from src.strategy.runtime_config import (
     DEFAULT_FIXED_LEVERAGE,
     DEFAULT_OPENROUTER_MAX_TOKENS,
     DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_OPENROUTER_PROVIDER,
     DEFAULT_OPENROUTER_REASONING_EFFORT,
     DEFAULT_OPENROUTER_TIMEOUT_SECONDS,
     DEFAULT_PASSIVE_SYMBOLS,
@@ -188,6 +191,20 @@ def _load_strategy_config() -> Dict[str, Any]:
     raw = load_runtime_config(CONFIG_PATH)
     passive_symbols = _normalize_passive_symbols(raw.get("passive_symbols"))
     active_targets = _normalize_active_targets(raw.get("active_targets"))
+    active1_min_abs_change_pct = _normalize_positive_float(
+        raw.get("active1_min_abs_change_pct", DEFAULT_ACTIVE1_MIN_ABS_CHANGE_PCT),
+        DEFAULT_ACTIVE1_MIN_ABS_CHANGE_PCT,
+    )
+    active1_max_abs_change_pct = _normalize_positive_float(
+        raw.get("active1_max_abs_change_pct", DEFAULT_ACTIVE1_MAX_ABS_CHANGE_PCT),
+        DEFAULT_ACTIVE1_MAX_ABS_CHANGE_PCT,
+    )
+    if active1_min_abs_change_pct > active1_max_abs_change_pct:
+        logger.warning("active1 abs-change bounds were reversed; swapping min/max values")
+        active1_min_abs_change_pct, active1_max_abs_change_pct = (
+            active1_max_abs_change_pct,
+            active1_min_abs_change_pct,
+        )
     active2_tradfi_min_abs_change_pct = _normalize_positive_float(
         raw.get("active2_tradfi_min_abs_change_pct", DEFAULT_ACTIVE2_TRADFI_MIN_ABS_CHANGE_PCT),
         DEFAULT_ACTIVE2_TRADFI_MIN_ABS_CHANGE_PCT,
@@ -240,12 +257,15 @@ def _load_strategy_config() -> Dict[str, Any]:
             raw.get("openrouter_timeout_seconds", DEFAULT_OPENROUTER_TIMEOUT_SECONDS),
             DEFAULT_OPENROUTER_TIMEOUT_SECONDS,
         ),
+        "openrouter_provider": _normalize_openrouter_provider(raw.get("openrouter_provider", DEFAULT_OPENROUTER_PROVIDER)),
         "passive_symbols": passive_symbols,
         "active_targets": active_targets,
         "active_candidate_pool_size": _normalize_positive_int(
             raw.get("active_candidate_pool_size", DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE),
             DEFAULT_ACTIVE_CANDIDATE_POOL_SIZE,
         ),
+        "active1_min_abs_change_pct": active1_min_abs_change_pct,
+        "active1_max_abs_change_pct": active1_max_abs_change_pct,
         "active2_tradfi_min_abs_change_pct": active2_tradfi_min_abs_change_pct,
         "active2_tradfi_max_abs_change_pct": active2_tradfi_max_abs_change_pct,
         "screener_quote": str(raw.get("screener_quote") or "USDT").strip().upper() or "USDT",
@@ -318,6 +338,46 @@ def _format_price(value: Any) -> Optional[float]:
 def _normalize_ai_decision(value: Any) -> Optional[str]:
     normalized = str(value or "").strip().upper()
     return normalized if normalized in MANAGED_DECISIONS else None
+
+
+def _decision_to_position_direction(value: Any) -> Optional[str]:
+    normalized = _normalize_ai_decision(value)
+    if normalized == "LONG":
+        return "long"
+    if normalized == "SHORT":
+        return "short"
+    return None
+
+
+def _decision_to_order_side(value: Any) -> Optional[str]:
+    normalized = _normalize_ai_decision(value)
+    if normalized == "LONG":
+        return "Buy"
+    if normalized == "SHORT":
+        return "Sell"
+    return None
+
+
+def _normalize_openrouter_provider(value: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else DEFAULT_OPENROUTER_PROVIDER
+    provider: Dict[str, Any] = {}
+    order = raw.get("order")
+    if isinstance(order, str):
+        order = [order]
+    if isinstance(order, (list, tuple, set)):
+        normalized_order = [str(item or "").strip().lower() for item in order if str(item or "").strip()]
+        if normalized_order:
+            provider["order"] = normalized_order
+    if "allow_fallbacks" in raw:
+        provider["allow_fallbacks"] = bool(raw.get("allow_fallbacks"))
+    if "require_parameters" in raw:
+        provider["require_parameters"] = bool(raw.get("require_parameters"))
+    if not provider:
+        return dict(DEFAULT_OPENROUTER_PROVIDER)
+    provider.setdefault("order", list(DEFAULT_OPENROUTER_PROVIDER["order"]))
+    provider.setdefault("allow_fallbacks", bool(DEFAULT_OPENROUTER_PROVIDER["allow_fallbacks"]))
+    provider.setdefault("require_parameters", bool(DEFAULT_OPENROUTER_PROVIDER["require_parameters"]))
+    return provider
 
 
 def _create_cycle_dir(base_dir: str = DB_DIR) -> str:
@@ -502,6 +562,13 @@ def _determine_ai_trigger(
         return {
             "should_trigger": True,
             "reason": "no_position",
+            **next_levels,
+        }
+    if _normalize_ai_decision(slot_state.get("last_ai_decision")) is None:
+        next_levels = _build_trigger_levels(current_price, trigger_pct_usdt)
+        return {
+            "should_trigger": True,
+            "reason": "missing_ai_decision",
             **next_levels,
         }
 
@@ -787,7 +854,8 @@ def _place_direction_position(
     available_notional_cap: Optional[float] = None,
 ) -> Dict[str, Any]:
     normalized_decision = _normalize_ai_decision(decision)
-    if normalized_decision not in MANAGED_DECISIONS:
+    side = _decision_to_order_side(normalized_decision)
+    if normalized_decision not in MANAGED_DECISIONS or side is None:
         return {"success": False, "action": "invalid_ai_decision"}
     desired_notional = float(target_notional_usdt)
     if available_notional_cap is not None and available_notional_cap > 0.0:
@@ -795,7 +863,6 @@ def _place_direction_position(
     if desired_notional <= 0.0:
         return {"success": False, "action": "insufficient_available_balance"}
 
-    side = "Buy" if normalized_decision == "LONG" else "Sell"
     order_plan = _build_entry_order_plan(
         symbol=symbol,
         desired_notional_usdt=desired_notional,
@@ -834,6 +901,8 @@ def _place_direction_position(
     return {
         "success": True,
         "action": "opened_new_position",
+        "ai_decision": normalized_decision,
+        "side": side,
         "order": order,
         "qty": qty,
         "requested_notional_usdt": desired_notional,
@@ -867,10 +936,43 @@ def _sync_position_after_trade(
     api_secret: str,
     symbol: str,
     stop_loss_pct: float,
+    expected_decision: Optional[str] = None,
 ) -> Dict[str, Any]:
+    expected_direction = _decision_to_position_direction(expected_decision)
     synced_position = get_position_snapshot(api_key, api_secret, symbol, retries=8, sleep_seconds=0.5)
     if not isinstance(synced_position, dict):
-        return {"position": None, "stop_sync": None}
+        verification = None
+        if expected_direction:
+            verification = {
+                "success": False,
+                "action": "post_trade_position_unavailable",
+                "expected_direction": expected_direction,
+                "actual_direction": None,
+            }
+        return {"position": None, "stop_sync": None, "direction_verification": verification}
+
+    synced_metrics = calculate_position_metrics(synced_position)
+    actual_direction = str(synced_metrics.get("direction") or "").strip().lower()
+    if expected_direction and actual_direction != expected_direction:
+        close_result = _close_existing_position(
+            api_key=api_key,
+            api_secret=api_secret,
+            position=synced_position,
+            context="post_trade_direction_mismatch",
+        )
+        close_ok = bool(close_result.get("success"))
+        return {
+            "position": synced_metrics,
+            "stop_sync": None,
+            "direction_verification": {
+                "success": False,
+                "action": "post_trade_direction_mismatch_closed" if close_ok else "post_trade_direction_mismatch_close_failed",
+                "expected_direction": expected_direction,
+                "actual_direction": actual_direction or None,
+                "close": close_result,
+            },
+        }
+
     stop_sync = _sync_fixed_stop_loss(
         api_key=api_key,
         api_secret=api_secret,
@@ -879,10 +981,27 @@ def _sync_position_after_trade(
         stop_loss_pct=stop_loss_pct,
     )
     refreshed_position = get_position_snapshot(api_key, api_secret, symbol, retries=2, sleep_seconds=0.35) or synced_position
+    refreshed_metrics = calculate_position_metrics(refreshed_position)
     return {
-        "position": calculate_position_metrics(refreshed_position),
+        "position": refreshed_metrics,
         "stop_sync": stop_sync,
+        "direction_verification": {
+            "success": True,
+            "expected_direction": expected_direction,
+            "actual_direction": str(refreshed_metrics.get("direction") or "").strip().lower() or None,
+        }
+        if expected_direction
+        else None,
     }
+
+
+def _merge_post_trade_sync_result(execution: Dict[str, Any], sync_result: Dict[str, Any]) -> Dict[str, Any]:
+    execution.update(sync_result)
+    verification = sync_result.get("direction_verification")
+    if isinstance(verification, dict) and not bool(verification.get("success")):
+        execution["success"] = False
+        execution["action"] = str(verification.get("action") or "post_trade_direction_verification_failed")
+    return execution
 
 
 def _rebalance_existing_position(
@@ -900,8 +1019,10 @@ def _rebalance_existing_position(
     stop_loss_pct: float,
 ) -> Dict[str, Any]:
     normalized_decision = _normalize_ai_decision(decision)
+    desired_direction = _decision_to_position_direction(normalized_decision)
+    if normalized_decision not in MANAGED_DECISIONS or desired_direction is None:
+        return {"success": False, "action": "invalid_ai_decision"}
     current_direction = _position_direction(position)
-    desired_direction = "long" if normalized_decision == "LONG" else "short"
     if current_direction not in {"long", "short"}:
         return {"success": False, "action": "invalid_existing_position"}
     if current_direction != desired_direction:
@@ -931,10 +1052,10 @@ def _rebalance_existing_position(
             api_secret=api_secret,
             symbol=symbol,
             stop_loss_pct=stop_loss_pct,
+            expected_decision=normalized_decision,
         )
         entry_result["action"] = "reversed_position"
-        entry_result.update(synced)
-        return entry_result
+        return _merge_post_trade_sync_result(entry_result, synced)
 
     current_notional = _position_notional(position, reference_price)
     target_notional = max(0.0, float(target_notional_usdt))
@@ -977,12 +1098,12 @@ def _rebalance_existing_position(
             api_secret=api_secret,
             symbol=symbol,
             stop_loss_pct=stop_loss_pct,
+            expected_decision=normalized_decision,
         )
         entry_result["action"] = "increased_position"
         entry_result["current_notional_usdt"] = current_notional
         entry_result["target_notional_usdt"] = target_notional
-        entry_result.update(synced)
-        return entry_result
+        return _merge_post_trade_sync_result(entry_result, synced)
 
     reduce_notional = abs(diff)
     reduce_qty = reduce_notional / reference_price if reference_price > 0.0 else 0.0
@@ -1032,6 +1153,8 @@ def _screen_active_candidate(
             excluded_symbols=excluded_symbols,
             quote=str(config["screener_quote"]),
             candidate_pool_size=int(config["active_candidate_pool_size"]),
+            min_abs_change_pct=float(config["active1_min_abs_change_pct"]),
+            max_abs_change_pct=float(config["active1_max_abs_change_pct"]),
             timeout=float(config["screener_timeout"]),
             retries=int(config["screener_retries"]),
             request_sleep=float(config["screener_request_sleep"]),
@@ -1098,6 +1221,7 @@ def _evaluate_slot_direction(
         timeframe_ohlcv=market_context["timeframes"],
         reasoning_effort=str(config["openrouter_reasoning_effort"]),
         model=str(config["openrouter_model"]),
+        provider_preferences=dict(config.get("openrouter_provider") or {}),
         max_tokens=int(config["openrouter_max_tokens"]),
         timeout_seconds=float(config["openrouter_timeout_seconds"]),
         analysis_sink=ai_analysis,
@@ -1247,12 +1371,17 @@ def _run_passive_slot(
 
     if not bool(trigger_info.get("should_trigger")):
         if isinstance(position, dict):
+            last_decision = _normalize_ai_decision(slot_state.get("last_ai_decision"))
+            if last_decision is None:
+                result["action"] = "missing_ai_decision_for_rebalance"
+                result["position"] = calculate_position_metrics(position)
+                return result, slot_state
             execution = _rebalance_existing_position(
                 api_key=api_key,
                 api_secret=api_secret,
                 symbol=symbol,
                 position=position,
-                decision=str(slot_state.get("last_ai_decision") or ("LONG" if _position_direction(position) == "long" else "SHORT")),
+                decision=last_decision,
                 target_notional_usdt=target_notional,
                 reference_price=reference_price,
                 leverage=leverage,
@@ -1264,9 +1393,10 @@ def _run_passive_slot(
             result["position"] = execution.get("position") or calculate_position_metrics(position)
             result["stop_sync"] = execution.get("stop_sync")
             result["action"] = str(execution.get("action") or "kept_position_size")
+            result["success"] = bool(execution.get("success"))
         else:
             result["action"] = "waiting_for_position"
-        result["success"] = True
+            result["success"] = True
         return result, _update_slot_trigger_state(
             slot_state,
             ai_triggered=False,
@@ -1320,13 +1450,15 @@ def _run_passive_slot(
             available_notional_cap=available_cap,
         )
         if bool(execution.get("success")) and str(execution.get("action")) == "opened_new_position":
-            execution.update(
+            _merge_post_trade_sync_result(
+                execution,
                 _sync_position_after_trade(
                     api_key=api_key,
                     api_secret=api_secret,
                     symbol=symbol,
                     stop_loss_pct=float(config["stop_loss_pct"]),
-                )
+                    expected_decision=decision,
+                ),
             )
     result["execution"] = execution
     result["success"] = bool(execution.get("success"))
@@ -1417,12 +1549,17 @@ def _run_active_slot(
             }
         )
         if not bool(trigger_info.get("should_trigger")):
+            last_decision = _normalize_ai_decision(slot_state.get("last_ai_decision"))
+            if last_decision is None:
+                result["action"] = "missing_ai_decision_for_rebalance"
+                result["position"] = calculate_position_metrics(position)
+                return result, slot_state, current_symbol
             execution = _rebalance_existing_position(
                 api_key=api_key,
                 api_secret=api_secret,
                 symbol=current_symbol,
                 position=position,
-                decision=str(slot_state.get("last_ai_decision") or ("LONG" if _position_direction(position) == "long" else "SHORT")),
+                decision=last_decision,
                 target_notional_usdt=target_notional,
                 reference_price=reference_price,
                 leverage=leverage,
@@ -1434,7 +1571,7 @@ def _run_active_slot(
             result["position"] = execution.get("position") or calculate_position_metrics(position)
             result["stop_sync"] = execution.get("stop_sync")
             result["action"] = str(execution.get("action") or "kept_position_size")
-            result["success"] = True
+            result["success"] = bool(execution.get("success"))
             updated_state = _update_slot_trigger_state(
                 slot_state,
                 ai_triggered=False,
@@ -1463,7 +1600,10 @@ def _run_active_slot(
             result["action"] = "ai_decision_failed"
             return result, slot_state, current_symbol
         current_direction = _position_direction(position)
-        desired_direction = "long" if exit_decision == "LONG" else "short"
+        desired_direction = _decision_to_position_direction(exit_decision)
+        if desired_direction is None:
+            result["action"] = "invalid_ai_decision"
+            return result, slot_state, current_symbol
         if current_direction == desired_direction:
             execution = _rebalance_existing_position(
                 api_key=api_key,
@@ -1591,13 +1731,15 @@ def _run_active_slot(
         available_notional_cap=available_cap,
     )
     if bool(execution.get("success")) and str(execution.get("action")) == "opened_new_position":
-        execution.update(
+        _merge_post_trade_sync_result(
+            execution,
             _sync_position_after_trade(
                 api_key=api_key,
                 api_secret=api_secret,
                 symbol=candidate_symbol,
                 stop_loss_pct=float(config["stop_loss_pct"]),
-            )
+                expected_decision=decision,
+            ),
         )
     result["execution"] = execution
     result["success"] = bool(execution.get("success"))
@@ -1642,7 +1784,12 @@ def run_portfolio_cycle(
             "passive_symbols": list(config["passive_symbols"]),
             "active_targets": list(config["active_targets"]),
             "openrouter_model": config["openrouter_model"],
+            "openrouter_provider": dict(config.get("openrouter_provider") or {}),
             "openrouter_reasoning_effort": config["openrouter_reasoning_effort"],
+            "active1_min_abs_change_pct": config["active1_min_abs_change_pct"],
+            "active1_max_abs_change_pct": config["active1_max_abs_change_pct"],
+            "active2_tradfi_min_abs_change_pct": config["active2_tradfi_min_abs_change_pct"],
+            "active2_tradfi_max_abs_change_pct": config["active2_tradfi_max_abs_change_pct"],
         },
     }
 

@@ -20,9 +20,12 @@ def _config():
         "openrouter_reasoning_effort": "high",
         "openrouter_max_tokens": 8192,
         "openrouter_timeout_seconds": 300.0,
+        "openrouter_provider": {"order": ["digitalocean"], "allow_fallbacks": True, "require_parameters": False},
         "passive_symbols": ["CLUSDT", "XAUUSDT", "QQQUSDT", "BTCUSDT"],
         "active_targets": [4.0, 4.0],
         "active_candidate_pool_size": 10,
+        "active1_min_abs_change_pct": 3.0,
+        "active1_max_abs_change_pct": 5.0,
         "active2_tradfi_min_abs_change_pct": 3.0,
         "active2_tradfi_max_abs_change_pct": 5.0,
         "screener_quote": "USDT",
@@ -75,7 +78,40 @@ def _long_position(symbol="ETHUSDT"):
     }
 
 
+def _short_position(symbol="ETHUSDT"):
+    return {
+        "symbol": symbol,
+        "positionAmt": "-2",
+        "side": "Sell",
+        "entryPrice": "100",
+        "markPrice": "99.5",
+        "leverage": "1",
+        "positionValue": "199",
+    }
+
+
 class PortfolioFlowTests(unittest.TestCase):
+    def test_active1_candidate_screening_uses_standard_screener_with_abs_change_band(self):
+        with patch(
+            "src.strategy.portfolio_strategy.screen_active_symbol",
+            return_value={
+                "metadata": {"screening_mode": "standard"},
+                "selection": {"symbol": "ETHUSDT", "selected": {"symbol": "ETHUSDT"}},
+            },
+        ) as mocked_standard, patch("src.strategy.portfolio_strategy.screen_active_tradfi_symbol") as mocked_tradfi:
+            candidate = portfolio_strategy._screen_active_candidate(
+                slot=_active_slot(),
+                config=_config(),
+                excluded_symbols=["BTCUSDT"],
+            )
+
+        self.assertEqual(candidate["symbol"], "ETHUSDT")
+        mocked_standard.assert_called_once()
+        mocked_tradfi.assert_not_called()
+        self.assertEqual(mocked_standard.call_args.kwargs["target_abs_change_pct"], 4.0)
+        self.assertEqual(mocked_standard.call_args.kwargs["min_abs_change_pct"], 3.0)
+        self.assertEqual(mocked_standard.call_args.kwargs["max_abs_change_pct"], 5.0)
+
     def test_active2_candidate_screening_uses_tradfi_screener(self):
         with patch(
             "src.strategy.portfolio_strategy.screen_active_tradfi_symbol",
@@ -96,6 +132,26 @@ class PortfolioFlowTests(unittest.TestCase):
         self.assertEqual(mocked_tradfi.call_args.kwargs["target_abs_change_pct"], 4.0)
         self.assertEqual(mocked_tradfi.call_args.kwargs["min_abs_change_pct"], 3.0)
         self.assertEqual(mocked_tradfi.call_args.kwargs["max_abs_change_pct"], 5.0)
+
+    def test_post_trade_direction_mismatch_is_closed_and_marked_failed(self):
+        with patch(
+            "src.strategy.portfolio_strategy.get_position_snapshot",
+            return_value=_short_position("BTCUSDT"),
+        ), patch("src.strategy.portfolio_strategy.close_position", return_value=True) as mocked_close, patch(
+            "src.strategy.portfolio_strategy.wait_for_close_propagation"
+        ), patch("src.strategy.portfolio_strategy.cancel_all_symbol_orders"):
+            result = portfolio_strategy._sync_position_after_trade(
+                api_key="key",
+                api_secret="secret",
+                symbol="BTCUSDT",
+                stop_loss_pct=0.04,
+                expected_decision="LONG",
+            )
+
+        self.assertEqual(result["direction_verification"]["action"], "post_trade_direction_mismatch_closed")
+        self.assertEqual(result["direction_verification"]["expected_direction"], "long")
+        self.assertEqual(result["direction_verification"]["actual_direction"], "short")
+        mocked_close.assert_called_once()
 
     def test_non_ai_cycle_does_not_create_db_artifact(self):
         slot = _passive_slot()

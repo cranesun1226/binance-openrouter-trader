@@ -10,6 +10,10 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(openrouter_trader.OPENROUTER_DEFAULT_REASONING_EFFORT, "high")
         self.assertEqual(openrouter_trader.OPENROUTER_MAX_REASONING_EFFORT, "xhigh")
         self.assertEqual(openrouter_trader.OPENROUTER_DEFAULT_TIMEOUT_SECONDS, 300.0)
+        self.assertEqual(
+            openrouter_trader.OPENROUTER_DEFAULT_PROVIDER_PREFERENCES,
+            {"order": ["digitalocean"], "allow_fallbacks": True, "require_parameters": False},
+        )
 
     def test_structured_call_sends_high_reasoning_and_parses_decision(self):
         response = Mock()
@@ -50,6 +54,9 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(payload["messages"][1]["content"], "prompt")
         self.assertEqual(payload["reasoning"]["effort"], "high")
         self.assertFalse(payload["reasoning"]["exclude"])
+        self.assertEqual(payload["provider"]["order"], ["digitalocean"])
+        self.assertTrue(payload["provider"]["allow_fallbacks"])
+        self.assertFalse(payload["provider"]["require_parameters"])
         self.assertEqual(payload["max_tokens"], 1234)
         self.assertEqual(payload["response_format"]["type"], "json_schema")
         self.assertEqual(mocked_post.call_args.kwargs["timeout"], (10.0, 345.0))
@@ -103,6 +110,57 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(result.decision.decision, "LONG")
         self.assertEqual(mocked_post.call_count, 2)
         mocked_sleep.assert_called_once()
+
+    def test_extra_decision_fields_are_retried_before_accepting_valid_json(self):
+        extra_field_response = Mock()
+        extra_field_response.status_code = 200
+        extra_field_response.json.return_value = {
+            "choices": [{"message": {"content": '{"decision":"LONG","reason":"looks good"}'}}],
+            "usage": {},
+        }
+        valid_response = Mock()
+        valid_response.status_code = 200
+        valid_response.json.return_value = {
+            "choices": [{"message": {"content": '{"decision":"SHORT"}'}}],
+            "usage": {},
+        }
+
+        with patch("src.ai.openrouter_trader.get_openrouter_api_key", return_value="key"), patch(
+            "src.ai.openrouter_trader.requests.post", side_effect=[extra_field_response, valid_response]
+        ) as mocked_post, patch("src.ai.openrouter_trader.time.sleep") as mocked_sleep:
+            result = openrouter_trader._call_openrouter_structured_decision(
+                prompt="prompt",
+                reasoning_effort="high",
+                response_model=openrouter_trader.TradeDirectionDecision,
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.decision.decision, "SHORT")
+        self.assertEqual(mocked_post.call_count, 2)
+        mocked_sleep.assert_called_once()
+
+    def test_non_exact_decision_json_fails_closed_after_retries(self):
+        lowercase_response = Mock()
+        lowercase_response.status_code = 200
+        lowercase_response.json.return_value = {
+            "choices": [{"message": {"content": '{"decision":"long"}'}}],
+            "usage": {},
+        }
+
+        with patch("src.ai.openrouter_trader.get_openrouter_api_key", return_value="key"), patch(
+            "src.ai.openrouter_trader.requests.post", return_value=lowercase_response
+        ) as mocked_post, patch("src.ai.openrouter_trader.time.sleep") as mocked_sleep, patch(
+            "src.ai.openrouter_trader.logger"
+        ):
+            result = openrouter_trader._call_openrouter_structured_decision(
+                prompt="prompt",
+                reasoning_effort="high",
+                response_model=openrouter_trader.TradeDirectionDecision,
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(mocked_post.call_count, openrouter_trader.OPENROUTER_GENERATE_MAX_RETRIES)
+        self.assertEqual(mocked_sleep.call_count, openrouter_trader.OPENROUTER_GENERATE_MAX_RETRIES - 1)
 
     def test_invalid_prompt_payload_fails_before_openrouter_call(self):
         with patch("src.ai.openrouter_trader._call_openrouter_structured_decision") as mocked_call, patch(
