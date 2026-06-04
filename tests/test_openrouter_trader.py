@@ -12,13 +12,19 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(openrouter_trader.OPENROUTER_DEFAULT_TIMEOUT_SECONDS, 300.0)
         self.assertEqual(
             openrouter_trader.OPENROUTER_DEFAULT_PROVIDER_PREFERENCES,
-            {"order": ["digitalocean"], "allow_fallbacks": True, "require_parameters": False},
+            {
+                "order": ["digitalocean"],
+                "only": ["digitalocean"],
+                "allow_fallbacks": False,
+                "require_parameters": False,
+            },
         )
 
     def test_structured_call_sends_high_reasoning_and_parses_decision(self):
         response = Mock()
         response.status_code = 200
         response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [
                 {
                     "message": {
@@ -55,7 +61,8 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertEqual(payload["reasoning"]["effort"], "high")
         self.assertFalse(payload["reasoning"]["exclude"])
         self.assertEqual(payload["provider"]["order"], ["digitalocean"])
-        self.assertTrue(payload["provider"]["allow_fallbacks"])
+        self.assertEqual(payload["provider"]["only"], ["digitalocean"])
+        self.assertFalse(payload["provider"]["allow_fallbacks"])
         self.assertFalse(payload["provider"]["require_parameters"])
         self.assertEqual(payload["max_tokens"], 1234)
         self.assertEqual(payload["response_format"]["type"], "json_schema")
@@ -65,6 +72,7 @@ class OpenRouterTraderTests(unittest.TestCase):
         response = Mock()
         response.status_code = 200
         response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [{"message": {"content": '{"decision":"SHORT"}'}}],
             "usage": {},
         }
@@ -87,12 +95,14 @@ class OpenRouterTraderTests(unittest.TestCase):
         empty_response = Mock()
         empty_response.status_code = 200
         empty_response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [{"finish_reason": "stop", "message": {"content": ""}}],
             "usage": {},
         }
         valid_response = Mock()
         valid_response.status_code = 200
         valid_response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [{"message": {"content": '{"decision":"LONG"}'}}],
             "usage": {},
         }
@@ -115,12 +125,14 @@ class OpenRouterTraderTests(unittest.TestCase):
         extra_field_response = Mock()
         extra_field_response.status_code = 200
         extra_field_response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [{"message": {"content": '{"decision":"LONG","reason":"looks good"}'}}],
             "usage": {},
         }
         valid_response = Mock()
         valid_response.status_code = 200
         valid_response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [{"message": {"content": '{"decision":"SHORT"}'}}],
             "usage": {},
         }
@@ -143,6 +155,7 @@ class OpenRouterTraderTests(unittest.TestCase):
         lowercase_response = Mock()
         lowercase_response.status_code = 200
         lowercase_response.json.return_value = {
+            "provider": "DigitalOcean",
             "choices": [{"message": {"content": '{"decision":"long"}'}}],
             "usage": {},
         }
@@ -161,6 +174,36 @@ class OpenRouterTraderTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(mocked_post.call_count, openrouter_trader.OPENROUTER_GENERATE_MAX_RETRIES)
         self.assertEqual(mocked_sleep.call_count, openrouter_trader.OPENROUTER_GENERATE_MAX_RETRIES - 1)
+
+    def test_unexpected_provider_retries_before_accepting_digitalocean(self):
+        fallback_response = Mock()
+        fallback_response.status_code = 200
+        fallback_response.json.return_value = {
+            "provider": "Alibaba",
+            "choices": [{"message": {"content": '{"decision":"LONG"}'}}],
+            "usage": {},
+        }
+        digitalocean_response = Mock()
+        digitalocean_response.status_code = 200
+        digitalocean_response.json.return_value = {
+            "provider": "DigitalOcean",
+            "choices": [{"message": {"content": '{"decision":"SHORT"}'}}],
+            "usage": {},
+        }
+
+        with patch("src.ai.openrouter_trader.get_openrouter_api_key", return_value="key"), patch(
+            "src.ai.openrouter_trader.requests.post", side_effect=[fallback_response, digitalocean_response]
+        ) as mocked_post, patch("src.ai.openrouter_trader.time.sleep") as mocked_sleep:
+            result = openrouter_trader._call_openrouter_structured_decision(
+                prompt="prompt",
+                reasoning_effort="high",
+                response_model=openrouter_trader.TradeDirectionDecision,
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.decision.decision, "SHORT")
+        self.assertEqual(mocked_post.call_count, 2)
+        mocked_sleep.assert_called_once()
 
     def test_invalid_prompt_payload_fails_before_openrouter_call(self):
         with patch("src.ai.openrouter_trader._call_openrouter_structured_decision") as mocked_call, patch(

@@ -26,6 +26,21 @@ class PortfolioHelperTests(unittest.TestCase):
         self.assertEqual(slots[4].active_screening_mode, "standard")
         self.assertEqual(slots[5].active_screening_mode, "tradfi")
 
+    def test_openrouter_provider_normalization_preserves_only_constraint(self):
+        provider = portfolio_strategy._normalize_openrouter_provider(
+            {
+                "order": ["DigitalOcean"],
+                "only": ["DigitalOcean"],
+                "allow_fallbacks": False,
+                "require_parameters": False,
+            }
+        )
+
+        self.assertEqual(provider["order"], ["digitalocean"])
+        self.assertEqual(provider["only"], ["digitalocean"])
+        self.assertFalse(provider["allow_fallbacks"])
+        self.assertFalse(provider["require_parameters"])
+
     def test_target_notional_uses_capital_usage_ratio_and_leverage(self):
         slot = portfolio_strategy.PortfolioSlot(
             slot_id="active_1",

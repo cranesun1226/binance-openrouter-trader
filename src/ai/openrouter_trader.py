@@ -63,7 +63,8 @@ OPENROUTER_APP_TITLE = "binance-openrouter-trader"
 _ONE_MILLION = 1_000_000
 OPENROUTER_DEFAULT_PROVIDER_PREFERENCES: dict[str, Any] = {
     "order": ["digitalocean"],
-    "allow_fallbacks": True,
+    "only": ["digitalocean"],
+    "allow_fallbacks": False,
     "require_parameters": False,
 }
 
@@ -105,6 +106,10 @@ class OpenRouterStructuredResponse(Generic[DecisionT]):
 
 class OpenRouterEmptyContentError(ValueError):
     """Raised when OpenRouter returns a response without final JSON content."""
+
+
+class OpenRouterUnexpectedProviderError(ValueError):
+    """Raised when OpenRouter routes a response through an unexpected provider."""
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -355,6 +360,44 @@ def _normalize_openrouter_provider_preferences(value: Optional[Dict[str, Any]]) 
     return normalized
 
 
+def _canonical_provider_name(value: Any) -> str:
+    return "".join(char for char in str(value or "").strip().lower() if char.isalnum())
+
+
+def _expected_response_providers(provider_preferences: Dict[str, Any]) -> set[str]:
+    only_providers = {
+        normalized
+        for normalized in (
+            _canonical_provider_name(provider) for provider in provider_preferences.get("only", [])
+        )
+        if normalized
+    }
+    if only_providers:
+        return only_providers
+    if provider_preferences.get("allow_fallbacks") is False:
+        return {
+            normalized
+            for normalized in (
+                _canonical_provider_name(provider) for provider in provider_preferences.get("order", [])
+            )
+            if normalized
+        }
+    return set()
+
+
+def _validate_response_provider(response_payload: Dict[str, Any], provider_preferences: Dict[str, Any]) -> None:
+    expected_providers = _expected_response_providers(provider_preferences)
+    if not expected_providers:
+        return
+    actual_provider = response_payload.get("provider")
+    normalized_actual = _canonical_provider_name(actual_provider)
+    if normalized_actual not in expected_providers:
+        expected_text = ", ".join(sorted(expected_providers))
+        raise OpenRouterUnexpectedProviderError(
+            f"OpenRouter routed through unexpected provider={actual_provider!r}; expected one of {expected_text}"
+        )
+
+
 def _save_direction_analysis_data(
     *,
     cycle_dir: str,
@@ -492,6 +535,7 @@ def _call_openrouter_structured_decision(
             response_payload = response.json()
             if not isinstance(response_payload, dict):
                 raise ValueError(f"OpenRouter returned unexpected payload: {response_payload!r}")
+            _validate_response_provider(response_payload, normalized_provider_preferences)
             message_payload = _extract_message_payload(response_payload)
             raw_response = _extract_content_text(message_payload)
             if not raw_response:

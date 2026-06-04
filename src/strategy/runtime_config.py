@@ -25,7 +25,8 @@ DEFAULT_OPENROUTER_MAX_TOKENS = 8192
 DEFAULT_OPENROUTER_TIMEOUT_SECONDS = 300.0
 DEFAULT_OPENROUTER_PROVIDER = {
     "order": ["digitalocean"],
-    "allow_fallbacks": True,
+    "only": ["digitalocean"],
+    "allow_fallbacks": False,
     "require_parameters": False,
 }
 DEFAULT_AI_PROMPT_TIMEFRAME = "1h"
