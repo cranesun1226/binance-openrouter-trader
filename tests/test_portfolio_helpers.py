@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from src.strategy import portfolio_strategy
 
@@ -127,6 +128,45 @@ class PortfolioHelperTests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertEqual(result["action"], "invalid_ai_decision")
+
+    def test_reverse_existing_position_closes_then_opens_opposite_immediately(self):
+        with patch(
+            "src.strategy.portfolio_strategy._close_existing_position",
+            return_value={"success": True, "action": "closed_position", "symbol": "ETHUSDT"},
+        ) as mocked_close, patch(
+            "src.strategy.portfolio_strategy._place_direction_position",
+            return_value={"success": True, "action": "opened_new_position"},
+        ) as mocked_place, patch(
+            "src.strategy.portfolio_strategy._sync_position_after_trade",
+            return_value={"position": {"symbol": "ETHUSDT", "direction": "short"}, "stop_sync": {"success": True}},
+        ) as mocked_sync:
+            result = portfolio_strategy._reverse_existing_position(
+                api_key="key",
+                api_secret="secret",
+                symbol="ETHUSDT",
+                position={
+                    "symbol": "ETHUSDT",
+                    "positionAmt": "2",
+                    "side": "Buy",
+                    "entryPrice": "100",
+                    "markPrice": "100",
+                },
+                decision="SHORT",
+                target_notional_usdt=200.0,
+                reference_price=100.0,
+                leverage=1,
+                available_notional_cap=200.0,
+                stop_loss_pct=0.04,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["action"], "reversed_position")
+        mocked_close.assert_called_once()
+        mocked_place.assert_called_once()
+        self.assertEqual(mocked_place.call_args.kwargs["symbol"], "ETHUSDT")
+        self.assertEqual(mocked_place.call_args.kwargs["decision"], "SHORT")
+        mocked_sync.assert_called_once()
+        self.assertEqual(mocked_sync.call_args.kwargs["expected_decision"], "SHORT")
 
     def test_trigger_levels_keep_precision_for_low_priced_symbols(self):
         levels = portfolio_strategy._build_trigger_levels(0.093455, 1.0)

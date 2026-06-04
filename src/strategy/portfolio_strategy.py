@@ -930,6 +930,57 @@ def _close_existing_position(
     return {"success": True, "action": "closed_position", "symbol": symbol, "qty": size}
 
 
+def _reverse_existing_position(
+    *,
+    api_key: str,
+    api_secret: str,
+    symbol: str,
+    position: Dict[str, Any],
+    decision: str,
+    target_notional_usdt: float,
+    reference_price: float,
+    leverage: int,
+    available_notional_cap: float,
+    stop_loss_pct: float,
+) -> Dict[str, Any]:
+    normalized_decision = _normalize_ai_decision(decision)
+    if normalized_decision not in MANAGED_DECISIONS:
+        return {"success": False, "action": "invalid_ai_decision"}
+
+    close_result = _close_existing_position(
+        api_key=api_key,
+        api_secret=api_secret,
+        position=position,
+        context="reverse_position",
+    )
+    if not bool(close_result.get("success")):
+        return {"success": False, "action": "reverse_close_failed", "close": close_result}
+
+    entry_result = _place_direction_position(
+        api_key=api_key,
+        api_secret=api_secret,
+        symbol=symbol,
+        decision=str(normalized_decision),
+        target_notional_usdt=target_notional_usdt,
+        reference_price=reference_price,
+        leverage=leverage,
+        available_notional_cap=available_notional_cap,
+    )
+    if not bool(entry_result.get("success")):
+        entry_result["action"] = "reverse_reopen_failed"
+        return entry_result
+
+    synced = _sync_position_after_trade(
+        api_key=api_key,
+        api_secret=api_secret,
+        symbol=symbol,
+        stop_loss_pct=stop_loss_pct,
+        expected_decision=normalized_decision,
+    )
+    entry_result["action"] = "reversed_position"
+    return _merge_post_trade_sync_result(entry_result, synced)
+
+
 def _sync_position_after_trade(
     *,
     api_key: str,
@@ -1026,36 +1077,18 @@ def _rebalance_existing_position(
     if current_direction not in {"long", "short"}:
         return {"success": False, "action": "invalid_existing_position"}
     if current_direction != desired_direction:
-        close_result = _close_existing_position(
-            api_key=api_key,
-            api_secret=api_secret,
-            position=position,
-            context="reverse_position",
-        )
-        if not bool(close_result.get("success")):
-            return {"success": False, "action": "reverse_close_failed", "close": close_result}
-        entry_result = _place_direction_position(
+        return _reverse_existing_position(
             api_key=api_key,
             api_secret=api_secret,
             symbol=symbol,
+            position=position,
             decision=str(normalized_decision),
             target_notional_usdt=target_notional_usdt,
             reference_price=reference_price,
             leverage=leverage,
             available_notional_cap=available_notional_cap,
-        )
-        if not bool(entry_result.get("success")):
-            entry_result["action"] = "reverse_reopen_failed"
-            return entry_result
-        synced = _sync_position_after_trade(
-            api_key=api_key,
-            api_secret=api_secret,
-            symbol=symbol,
             stop_loss_pct=stop_loss_pct,
-            expected_decision=normalized_decision,
         )
-        entry_result["action"] = "reversed_position"
-        return _merge_post_trade_sync_result(entry_result, synced)
 
     current_notional = _position_notional(position, reference_price)
     target_notional = max(0.0, float(target_notional_usdt))

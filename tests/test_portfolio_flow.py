@@ -257,6 +257,58 @@ class PortfolioFlowTests(unittest.TestCase):
         self.assertEqual(result["cycle_dir"], temp_dir)
         self.assertTrue(artifact_exists)
 
+    def test_passive_opposite_direction_reverses_same_symbol_without_rescreening(self):
+        slot = _passive_slot()
+        slot_state = {
+            "slot_id": "passive_cl",
+            "kind": "passive",
+            "symbol": "CLUSDT",
+            "last_ai_trigger_price": 100.0,
+            "next_trigger_down": 99.0,
+            "next_trigger_up": 101.0,
+            "last_ai_decision": "LONG",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "src.strategy.portfolio_strategy._reference_price", return_value=101.5
+        ), patch(
+            "src.strategy.portfolio_strategy._evaluate_slot_direction",
+            return_value=("SHORT", {"reasoning": "reverse"}, {}),
+        ) as mocked_ai, patch(
+            "src.strategy.portfolio_strategy._rebalance_existing_position",
+            return_value={
+                "success": True,
+                "action": "reversed_position",
+                "position": {"symbol": "CLUSDT", "direction": "short"},
+            },
+        ) as mocked_rebalance, patch(
+            "src.strategy.portfolio_strategy._screen_active_candidate"
+        ) as mocked_screen:
+            result, updated_state = portfolio_strategy._run_passive_slot(
+                slot=slot,
+                slot_state=slot_state,
+                config=_config(),
+                api_key="key",
+                api_secret="secret",
+                account_overview={"equity": 1000.0, "available_balance": 500.0},
+                position=_long_position("CLUSDT"),
+                as_of_ms=1,
+                cycle_dir_factory=lambda: temp_dir,
+                notification_callback=None,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["symbol"], "CLUSDT")
+        self.assertEqual(result["action"], "reversed_position")
+        self.assertEqual(result["ai_decision"], "SHORT")
+        self.assertEqual(updated_state["symbol"], "CLUSDT")
+        self.assertEqual(updated_state["last_ai_decision"], "SHORT")
+        mocked_ai.assert_called_once()
+        mocked_rebalance.assert_called_once()
+        self.assertEqual(mocked_rebalance.call_args.kwargs["symbol"], "CLUSDT")
+        self.assertEqual(mocked_rebalance.call_args.kwargs["decision"], "SHORT")
+        mocked_screen.assert_not_called()
+
     def test_active_existing_same_direction_does_not_rescreen(self):
         slot = _active_slot()
         slot_state = {
